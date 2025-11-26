@@ -84,6 +84,36 @@
 
 ---
 
+### 17:35 - 🚀 部署到 Zeabur 完成
+
+**事件**：成功部署 Vibe Planner 到 Zeabur
+
+**線上網址**：https://vibeplanner.zeabur.app
+
+**完成項目**：
+- 簡化設定頁面（移除 API Key 顯示和手動同步按鈕）
+- 推送到 GitHub (https://github.com/Hsepherd/VIBE_PLANNER)
+- 在 Zeabur 建立服務並連結 GitHub
+- 設定環境變數（OPENAI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY）
+- 設定自訂網域 vibeplanner.zeabur.app
+
+**遇到問題**：
+1. Next.js 專案在 `app/` 子目錄，Zeabur 無法識別
+2. 移動檔案後出現 `app/app/` 雙層目錄問題
+3. Next.js 16 的 Turbopack 根目錄偵測問題
+
+**解決方案**：
+1. 將 Next.js 專案移到根目錄
+2. 修正目錄結構：`app/` 作為 App Router，`src/` 放元件和工具
+3. 設定 `turbopack.root` 明確指定根目錄
+
+**專案結構調整**：
+- `app/` - Next.js App Router 頁面
+- `src/components/` - React 元件
+- `src/lib/` - 工具函數和 API
+
+---
+
 ### 16:20 - ✅ 功能測試全部通過
 
 **事件**：完成所有功能測試

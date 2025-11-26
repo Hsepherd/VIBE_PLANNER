@@ -23,6 +23,7 @@ export interface Task {
   dueDate?: Date
   assignee?: string
   projectId?: string
+  project?: string  // 專案名稱（從 AI 萃取）
   createdAt: Date
   updatedAt: Date
   completedAt?: Date

@@ -68,64 +68,110 @@ export default function TasksPage() {
     low: { label: '🟢 低', color: 'outline' as const },
   }
 
-  const TaskItem = ({ task }: { task: Task }) => (
-    <div
-      className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${
-        task.status === 'completed' ? 'opacity-60 bg-muted/30' : 'bg-card hover:bg-muted/50'
-      }`}
-    >
-      {/* 完成按鈕 */}
-      <Button
-        variant={task.status === 'completed' ? 'default' : 'outline'}
-        size="icon"
-        className="h-6 w-6 shrink-0"
-        onClick={() => {
-          if (task.status === 'completed') {
-            updateTask(task.id, { status: 'pending', completedAt: undefined })
-          } else {
-            completeTask(task.id)
-          }
-        }}
-      >
-        <Check className="h-3 w-3" />
-      </Button>
+  // 展開狀態管理
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set())
 
-      {/* 任務內容 */}
-      <div className="flex-1 min-w-0">
-        <p className={`font-medium truncate ${task.status === 'completed' ? 'line-through' : ''}`}>
-          {task.title}
-        </p>
-        <div className="flex items-center gap-2 mt-1 flex-wrap">
-          {task.dueDate && (
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <Calendar className="h-3 w-3" />
-              {format(new Date(task.dueDate), 'M/d', { locale: zhTW })}
-            </span>
-          )}
-          {task.assignee && (
-            <span className="text-xs text-muted-foreground">
-              @{task.assignee}
-            </span>
-          )}
+  const toggleExpand = (taskId: string) => {
+    setExpandedTasks(prev => {
+      const next = new Set(prev)
+      if (next.has(taskId)) {
+        next.delete(taskId)
+      } else {
+        next.add(taskId)
+      }
+      return next
+    })
+  }
+
+  const TaskItem = ({ task }: { task: Task }) => {
+    const isExpanded = expandedTasks.has(task.id)
+    const hasDescription = task.description && task.description.trim().length > 0
+
+    return (
+      <div
+        className={`rounded-lg border transition-all ${
+          task.status === 'completed' ? 'opacity-60 bg-muted/30' : 'bg-card hover:bg-muted/50'
+        }`}
+      >
+        <div className="flex items-center gap-3 p-3">
+          {/* 完成按鈕 */}
+          <Button
+            variant={task.status === 'completed' ? 'default' : 'outline'}
+            size="icon"
+            className="h-6 w-6 shrink-0"
+            onClick={() => {
+              if (task.status === 'completed') {
+                updateTask(task.id, { status: 'pending', completedAt: undefined })
+              } else {
+                completeTask(task.id)
+              }
+            }}
+          >
+            <Check className="h-3 w-3" />
+          </Button>
+
+          {/* 任務內容 */}
+          <div
+            className="flex-1 min-w-0 cursor-pointer"
+            onClick={() => hasDescription && toggleExpand(task.id)}
+          >
+            <div className="flex items-center gap-2">
+              <p className={`font-medium ${task.status === 'completed' ? 'line-through' : ''}`}>
+                {task.title}
+              </p>
+              {hasDescription && (
+                <span className="text-muted-foreground">
+                  {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              {task.dueDate && (
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Calendar className="h-3 w-3" />
+                  {format(new Date(task.dueDate), 'M/d', { locale: zhTW })}
+                </span>
+              )}
+              {task.assignee && (
+                <span className="text-xs text-muted-foreground">
+                  @{task.assignee}
+                </span>
+              )}
+              {task.project && (
+                <Badge variant="outline" className="text-xs">
+                  {task.project}
+                </Badge>
+              )}
+            </div>
+          </div>
+
+          {/* 優先級 */}
+          <Badge variant={priorityConfig[task.priority].color} className="shrink-0">
+            {task.priority}
+          </Badge>
+
+          {/* 刪除 */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground hover:text-destructive shrink-0"
+            onClick={() => deleteTask(task.id)}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
         </div>
+
+        {/* 展開的描述區域 */}
+        {isExpanded && hasDescription && (
+          <div className="px-3 pb-3 pt-0 ml-9 border-t mt-2">
+            <p className="text-sm text-muted-foreground whitespace-pre-wrap mt-2">
+              {task.description}
+            </p>
+          </div>
+        )}
       </div>
-
-      {/* 優先級 */}
-      <Badge variant={priorityConfig[task.priority].color} className="shrink-0">
-        {task.priority}
-      </Badge>
-
-      {/* 刪除 */}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8 text-muted-foreground hover:text-destructive shrink-0"
-        onClick={() => deleteTask(task.id)}
-      >
-        <Trash2 className="h-4 w-4" />
-      </Button>
-    </div>
-  )
+    )
+  }
 
   return (
     <ScrollArea className="flex-1">

@@ -101,8 +101,92 @@ export const getFullSystemPrompt = () => {
 `
 }
 
+// 長篇會議逐字稿專用的系統提示詞
+export const getMeetingTranscriptPrompt = () => {
+  const today = getTodayDate()
+
+  return `你是專業的會議記錄分析專家。你的任務是從會議逐字稿中萃取所有重要資訊。
+
+## 今天的日期
+今天是 ${today.year} 年 ${today.month} 月 ${today.day} 日，星期${today.weekday}。
+
+## 分析步驟
+請按以下步驟仔細分析會議內容：
+
+### 第一步：識別會議基本資訊
+- 會議主題/目的
+- 參與者（如有提及）
+- 討論的主要議題
+
+### 第二步：萃取所有行動項目（Action Items）
+仔細找出所有：
+- 明確被指派的任務
+- 需要跟進的事項
+- 決議事項
+- 待確認/待處理的問題
+- 承諾要做的事情（例如：「我來處理」、「這個我負責」、「下週給你」）
+
+### 第三步：為每個任務提供完整資訊
+每個任務必須包含：
+- **標題**：簡短精確的任務名稱（10-20字）
+- **描述**：完整的任務內容、背景脈絡、相關討論重點（50-200字）
+- **負責人**：如有提及
+- **截止日期**：根據討論內容推斷，轉換為具體日期
+- **優先級**：根據討論語氣和緊急程度判斷
+- **相關專案**：如有提及
+
+## 重要原則
+1. **寧可多不可少**：如果不確定是否為任務，先列出來
+2. **保留完整脈絡**：description 要包含足夠的背景資訊，讓讀者不需要回看原文就能理解
+3. **日期轉換**：將「下週三」、「月底前」等轉換為具體日期（YYYY-MM-DD）
+4. **推斷優先級**：
+   - urgent：提到「立刻」、「今天」、「緊急」、「馬上」
+   - high：提到「這週」、「儘快」、「重要」
+   - medium：提到「下週」、「近期」
+   - low：沒有明確時間壓力
+
+## 回應格式（必須嚴格遵守）
+\`\`\`json
+{
+  "type": "tasks_extracted",
+  "meeting_summary": "會議摘要（100-300字，包含主要討論內容和結論）",
+  "tasks": [
+    {
+      "title": "精簡的任務標題",
+      "description": "詳細描述：包含任務背景、具體內容、相關討論重點、注意事項等",
+      "due_date": "YYYY-MM-DD 或 null",
+      "assignee": "負責人名稱 或 null",
+      "priority": "low | medium | high | urgent",
+      "project": "專案名稱 或 null"
+    }
+  ],
+  "key_decisions": ["重要決議1", "重要決議2"],
+  "follow_ups": ["需要後續跟進的事項"],
+  "message": "已從會議中萃取 X 項任務..."
+}
+\`\`\`
+`
+}
+
 // 舊的靜態 SYSTEM_PROMPT（保留向後相容）
 export const SYSTEM_PROMPT = getFullSystemPrompt()
+
+// 檢測是否為長篇會議逐字稿
+function isLongMeetingTranscript(text: string): boolean {
+  // 長度超過 3000 字元，且包含會議相關關鍵字
+  const meetingKeywords = [
+    '會議', '討論', '報告', '決議', '行動項目', '待辦',
+    '負責人', '時間', '進度', '專案', '問題', '解決',
+    '同意', '確認', '下週', '明天', '截止', 'meeting',
+    ':', '：', // 對話格式常見的冒號
+  ]
+
+  const hasKeywords = meetingKeywords.some(keyword =>
+    text.toLowerCase().includes(keyword.toLowerCase())
+  )
+
+  return text.length > 3000 && hasKeywords
+}
 
 // 處理聊天請求
 export async function chat(
@@ -135,14 +219,23 @@ export async function chat(
     }
   }
 
+  // 檢查最後一條使用者訊息是否為長篇會議逐字稿
+  const lastUserMessage = messages.filter(m => m.role === 'user').pop()
+  const isLongTranscript = lastUserMessage && isLongMeetingTranscript(lastUserMessage.content)
+
+  // 根據內容類型選擇不同的 prompt 和參數
+  const systemPrompt = isLongTranscript ? getMeetingTranscriptPrompt() : SYSTEM_PROMPT
+  const maxTokens = isLongTranscript ? 8000 : 4000  // 長文需要更多輸出空間
+  const temperature = isLongTranscript ? 0.3 : 0.7  // 長文用較低溫度確保穩定
+
   const response = await openai.chat.completions.create({
     model: 'gpt-4.1-mini',
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
       ...userMessages,
     ],
-    temperature: 0.7,
-    max_tokens: 2000,
+    temperature,
+    max_tokens: maxTokens,
   })
 
   return response.choices[0].message.content
