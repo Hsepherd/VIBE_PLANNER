@@ -1,13 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server'
-import openai, { getFullSystemPrompt, parseAIResponse } from '@/lib/openai'
+import openai, { getFullSystemPrompt, getMeetingTranscriptPrompt, parseAIResponse } from '@/lib/openai'
+
+// 檢測是否為長篇會議逐字稿
+function isLongMeetingTranscript(text: string): boolean {
+  const meetingKeywords = [
+    '會議', '討論', '報告', '決議', '行動項目', '待辦',
+    '負責人', '時間', '進度', '專案', '問題', '解決',
+    '同意', '確認', '下週', '明天', '截止', 'meeting',
+    ':', '：',
+  ]
+
+  const hasKeywords = meetingKeywords.some(keyword =>
+    text.toLowerCase().includes(keyword.toLowerCase())
+  )
+
+  return text.length > 3000 && hasKeywords
+}
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const { messages, image } = body
 
-    // 動態生成系統提示詞（包含今天日期）
-    const systemPrompt = getFullSystemPrompt()
+    // 取得最後一條使用者訊息
+    const lastUserMessage = messages.filter((m: { role: string }) => m.role === 'user').pop()
+    const isLongTranscript = lastUserMessage && isLongMeetingTranscript(lastUserMessage.content)
+
+    // 根據內容類型選擇不同的 prompt 和參數
+    const systemPrompt = isLongTranscript ? getMeetingTranscriptPrompt() : getFullSystemPrompt()
+    const maxTokens = isLongTranscript ? 8000 : 4000
+    const temperature = isLongTranscript ? 0.3 : 0.7
 
     // 構建訊息陣列
     const chatMessages: Array<{
@@ -51,8 +73,8 @@ export async function POST(request: NextRequest) {
     const response = await openai.chat.completions.create({
       model: 'gpt-4.1-mini',
       messages: chatMessages as Parameters<typeof openai.chat.completions.create>[0]['messages'],
-      temperature: 0.7,
-      max_tokens: 2000,
+      temperature,
+      max_tokens: maxTokens,
     })
 
     const aiResponse = response.choices[0].message.content || ''

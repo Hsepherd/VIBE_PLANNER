@@ -6,12 +6,22 @@ import { Textarea } from '@/components/ui/textarea'
 import { useAppStore, type Message } from '@/lib/store'
 import { Send, Paperclip, X, Loader2, Image as ImageIcon } from 'lucide-react'
 
+// AI 萃取任務的類型
+interface ExtractedTask {
+  title: string
+  description?: string
+  due_date?: string
+  assignee?: string
+  priority?: 'low' | 'medium' | 'high' | 'urgent'
+  project?: string
+}
+
 export default function InputArea() {
   const [input, setInput] = useState('')
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const { addMessage, messages, isLoading, setIsLoading, addApiUsage } = useAppStore()
+  const { addMessage, messages, isLoading, setIsLoading, addApiUsage, addTask } = useAppStore()
 
   const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -80,6 +90,22 @@ export default function InputArea() {
           role: 'assistant',
           content: data.raw || data.data?.message || '抱歉，我無法處理這個請求。',
         })
+
+        // 處理萃取出的任務
+        if (data.data?.type === 'tasks_extracted' && data.data.tasks) {
+          const tasks = data.data.tasks as ExtractedTask[]
+          tasks.forEach((task: ExtractedTask) => {
+            addTask({
+              title: task.title,
+              description: task.description || '',
+              status: 'pending',
+              priority: task.priority || 'medium',
+              dueDate: task.due_date ? new Date(task.due_date) : undefined,
+              assignee: task.assignee || undefined,
+              project: task.project || undefined,
+            })
+          })
+        }
 
         // 記錄 API 使用量
         if (data.usage) {
