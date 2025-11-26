@@ -1,0 +1,201 @@
+'use client'
+
+import { useState } from 'react'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { useAppStore, type AppState, type Task, type Project } from '@/lib/store'
+import { format } from 'date-fns'
+import { zhTW } from 'date-fns/locale'
+import { Plus, Trash2, FolderKanban, Edit2, Check, X } from 'lucide-react'
+
+export default function ProjectsPage() {
+  const projects = useAppStore((state: AppState) => state.projects)
+  const tasks = useAppStore((state: AppState) => state.tasks)
+  const addProject = useAppStore((state: AppState) => state.addProject)
+  const updateProject = useAppStore((state: AppState) => state.updateProject)
+  const deleteProject = useAppStore((state: AppState) => state.deleteProject)
+
+  const [newProjectName, setNewProjectName] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
+
+  const handleAddProject = () => {
+    if (!newProjectName.trim()) return
+    addProject({
+      name: newProjectName.trim(),
+      status: 'active',
+      progress: 0,
+    })
+    setNewProjectName('')
+  }
+
+  const handleStartEdit = (id: string, name: string) => {
+    setEditingId(id)
+    setEditingName(name)
+  }
+
+  const handleSaveEdit = (id: string) => {
+    if (editingName.trim()) {
+      updateProject(id, { name: editingName.trim() })
+    }
+    setEditingId(null)
+    setEditingName('')
+  }
+
+  const handleCancelEdit = () => {
+    setEditingId(null)
+    setEditingName('')
+  }
+
+  // 計算專案的任務統計
+  const getProjectStats = (projectId: string) => {
+    const projectTasks = tasks.filter((t: Task) => t.projectId === projectId)
+    const completed = projectTasks.filter((t: Task) => t.status === 'completed').length
+    const total = projectTasks.length
+    return { completed, total, progress: total > 0 ? Math.round((completed / total) * 100) : 0 }
+  }
+
+  const statusConfig = {
+    active: { label: '進行中', color: 'default' as const },
+    completed: { label: '已完成', color: 'secondary' as const },
+    archived: { label: '已封存', color: 'outline' as const },
+  }
+
+  return (
+    <ScrollArea className="flex-1">
+      <div className="p-6 space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">📁 專案管理</h1>
+        </div>
+
+        {/* 新增專案 */}
+        <Card>
+          <CardContent className="pt-4">
+            <div className="flex gap-2">
+              <Input
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                placeholder="輸入專案名稱..."
+                onKeyDown={(e) => e.key === 'Enter' && handleAddProject()}
+              />
+              <Button onClick={handleAddProject}>
+                <Plus className="h-4 w-4 mr-1" />
+                新增專案
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* 專案列表 */}
+        {projects.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            <FolderKanban className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p>尚未建立任何專案</p>
+            <p className="text-sm mt-2">
+              專案可以幫助你分類和追蹤相關的任務
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {projects.map((project: Project) => {
+              const stats = getProjectStats(project.id)
+              const isEditing = editingId === project.id
+
+              return (
+                <Card key={project.id} className="relative">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between">
+                      {isEditing ? (
+                        <div className="flex items-center gap-2 flex-1">
+                          <Input
+                            value={editingName}
+                            onChange={(e) => setEditingName(e.target.value)}
+                            className="h-8"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveEdit(project.id)
+                              if (e.key === 'Escape') handleCancelEdit()
+                            }}
+                          />
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            onClick={() => handleSaveEdit(project.id)}
+                          >
+                            <Check className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            onClick={handleCancelEdit}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <CardTitle className="text-lg">{project.name}</CardTitle>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8"
+                              onClick={() => handleStartEdit(project.id, project.name)}
+                            >
+                              <Edit2 className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              onClick={() => deleteProject(project.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <Badge variant={statusConfig[project.status].color}>
+                        {statusConfig[project.status].label}
+                      </Badge>
+                      <span className="text-sm text-muted-foreground">
+                        {stats.completed}/{stats.total} 任務
+                      </span>
+                    </div>
+
+                    {/* 進度條 */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">進度</span>
+                        <span className="font-medium">{stats.progress}%</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full bg-primary transition-all"
+                          style={{ width: `${stats.progress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-muted-foreground">
+                      建立於 {format(new Date(project.createdAt), 'yyyy/M/d', { locale: zhTW })}
+                    </p>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </ScrollArea>
+  )
+}
