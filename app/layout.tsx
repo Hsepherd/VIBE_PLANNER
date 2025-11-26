@@ -1,7 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { Sidebar } from "@/components/layout";
+import { ClientLayout } from "@/components/layout";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -18,6 +18,13 @@ export const metadata: Metadata = {
   description: "你的超級個人助理，幫你追蹤任務、萃取會議記錄、管理專案",
 };
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -28,12 +35,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <div className="flex h-screen">
-          <Sidebar />
-          <main className="flex-1 flex flex-col overflow-hidden">
-            {children}
-          </main>
-        </div>
+        <ClientLayout>{children}</ClientLayout>
       </body>
     </html>
   );

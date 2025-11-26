@@ -116,7 +116,7 @@ export default function InputArea() {
   }
 
   return (
-    <div className="border-t bg-background p-4">
+    <div className="border-t bg-background p-3 md:p-4 safe-area-bottom">
       <div className="max-w-3xl mx-auto">
         {/* 圖片預覽 */}
         {imagePreview && (
@@ -124,7 +124,7 @@ export default function InputArea() {
             <img
               src={imagePreview}
               alt="Preview"
-              className="h-20 rounded border object-cover"
+              className="h-16 md:h-20 rounded border object-cover"
             />
             <Button
               size="icon"
@@ -149,14 +149,15 @@ export default function InputArea() {
           <Button
             variant="outline"
             size="icon"
+            className="shrink-0 h-10 w-10 md:h-9 md:w-9"
             onClick={() => fileInputRef.current?.click()}
             disabled={isLoading}
             title="上傳圖片"
           >
             {imagePreview ? (
-              <ImageIcon className="h-4 w-4 text-primary" />
+              <ImageIcon className="h-5 w-5 md:h-4 md:w-4 text-primary" />
             ) : (
-              <Paperclip className="h-4 w-4" />
+              <Paperclip className="h-5 w-5 md:h-4 md:w-4" />
             )}
           </Button>
 
@@ -165,8 +166,8 @@ export default function InputArea() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="輸入訊息、貼上逐字稿，或上傳截圖..."
-            className="min-h-[44px] max-h-[200px] resize-none"
+            placeholder="輸入訊息或貼上會議記錄..."
+            className="min-h-[44px] max-h-[150px] md:max-h-[200px] resize-none text-base"
             disabled={isLoading}
           />
 
@@ -175,16 +176,17 @@ export default function InputArea() {
             onClick={handleSubmit}
             disabled={(!input.trim() && !imagePreview) || isLoading}
             size="icon"
+            className="shrink-0 h-10 w-10 md:h-9 md:w-9"
           >
             {isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-5 w-5 md:h-4 md:w-4 animate-spin" />
             ) : (
-              <Send className="h-4 w-4" />
+              <Send className="h-5 w-5 md:h-4 md:w-4" />
             )}
           </Button>
         </div>
 
-        <p className="text-xs text-muted-foreground mt-2 text-center">
+        <p className="hidden md:block text-xs text-muted-foreground mt-2 text-center">
           Enter 換行，⌘/Ctrl + Enter 送出
         </p>
       </div>

@@ -120,3 +120,19 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Safe area for iOS */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Mobile touch optimization */
+@media (max-width: 768px) {
+  button, a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  textarea {
+    font-size: 16px; /* Prevent iOS zoom on focus */
+  }
+}

@@ -12,7 +12,10 @@ import {
   FolderKanban,
   Settings,
   Trash2,
+  Menu,
+  X,
 } from 'lucide-react'
+import { useState, useEffect } from 'react'
 
 const navItems = [
   { href: '/', label: '對話', icon: MessageSquare },
@@ -21,7 +24,8 @@ const navItems = [
   { href: '/projects', label: '專案', icon: FolderKanban },
 ]
 
-export default function Sidebar() {
+// 側邊欄內容元件
+function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
   const tasks = useAppStore((state: AppState) => state.tasks)
   const clearMessages = useAppStore((state: AppState) => state.clearMessages)
@@ -32,10 +36,10 @@ export default function Sidebar() {
   ).length
 
   return (
-    <aside className="w-64 border-r bg-muted/30 flex flex-col">
+    <>
       {/* Logo */}
       <div className="p-4 border-b">
-        <Link href="/" className="flex items-center gap-2">
+        <Link href="/" className="flex items-center gap-2" onClick={onNavigate}>
           <span className="text-2xl">🎯</span>
           <span className="font-bold text-lg">Vibe Planner</span>
         </Link>
@@ -48,7 +52,7 @@ export default function Sidebar() {
           const Icon = item.icon
 
           return (
-            <Link key={item.href} href={item.href}>
+            <Link key={item.href} href={item.href} onClick={onNavigate}>
               <Button
                 variant={isActive ? 'secondary' : 'ghost'}
                 className="w-full justify-start gap-2"
@@ -85,18 +89,89 @@ export default function Sidebar() {
         <Button
           variant="ghost"
           className="w-full justify-start gap-2 text-muted-foreground"
-          onClick={clearMessages}
+          onClick={() => {
+            clearMessages()
+            onNavigate?.()
+          }}
         >
           <Trash2 className="h-4 w-4" />
           清除對話
         </Button>
-        <Link href="/settings">
+        <Link href="/settings" onClick={onNavigate}>
           <Button variant="ghost" className="w-full justify-start gap-2 text-muted-foreground">
             <Settings className="h-4 w-4" />
             設定
           </Button>
         </Link>
       </div>
+    </>
+  )
+}
+
+// 手機版漢堡選單按鈕
+export function MobileMenuButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="md:hidden"
+      onClick={onClick}
+    >
+      <Menu className="h-6 w-6" />
+    </Button>
+  )
+}
+
+// 手機版側邊欄（滑出式）
+export function MobileSidebar({
+  isOpen,
+  onClose,
+}: {
+  isOpen: boolean
+  onClose: () => void
+}) {
+  // 防止背景滾動
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [isOpen])
+
+  if (!isOpen) return null
+
+  return (
+    <>
+      {/* 背景遮罩 */}
+      <div
+        className="fixed inset-0 bg-black/50 z-40 md:hidden"
+        onClick={onClose}
+      />
+
+      {/* 側邊欄 */}
+      <aside className="fixed left-0 top-0 bottom-0 w-72 bg-background border-r z-50 flex flex-col md:hidden animate-in slide-in-from-left duration-200">
+        {/* 關閉按鈕 */}
+        <div className="absolute right-2 top-2">
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+
+        <SidebarContent onNavigate={onClose} />
+      </aside>
+    </>
+  )
+}
+
+// 桌面版側邊欄
+export default function Sidebar() {
+  return (
+    <aside className="hidden md:flex w-64 border-r bg-muted/30 flex-col">
+      <SidebarContent />
     </aside>
   )
 }
