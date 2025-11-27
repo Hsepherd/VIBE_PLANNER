@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
-import openai, { getFullSystemPrompt, getMeetingTranscriptPrompt, parseAIResponse } from '@/lib/openai'
+import { NextRequest } from 'next/server'
+import openai, { getFullSystemPrompt, getMeetingTranscriptPrompt } from '@/lib/openai'
 
 // 檢測是否為長篇會議逐字稿
 function isLongMeetingTranscript(text: string): boolean {
@@ -26,10 +26,8 @@ export async function POST(request: NextRequest) {
     const lastUserMessage = messages.filter((m: { role: string }) => m.role === 'user').pop()
     const isLongTranscript = lastUserMessage && isLongMeetingTranscript(lastUserMessage.content)
 
-    // 根據內容類型選擇不同的 prompt 和參數
+    // 根據內容類型選擇不同的 prompt
     const systemPrompt = isLongTranscript ? getMeetingTranscriptPrompt() : getFullSystemPrompt()
-    const maxTokens = isLongTranscript ? 8000 : 4000
-    const temperature = isLongTranscript ? 0.3 : 0.7
 
     // 構建訊息陣列
     const chatMessages: Array<{
@@ -69,44 +67,72 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 呼叫 OpenAI API (GPT-5)
-    // GPT-5 注意事項：
-    // 1. 使用 max_completion_tokens 而非 max_tokens
-    // 2. 不支援 temperature 參數（只能用預設值 1）
-    // 3. 需要更多 tokens 進行推理
-    const response = await openai.chat.completions.create({
+    // 使用 GPT-5 Streaming
+    const stream = await openai.chat.completions.create({
       model: 'gpt-5',
       messages: chatMessages as Parameters<typeof openai.chat.completions.create>[0]['messages'],
       max_completion_tokens: isLongTranscript ? 16000 : 8000,
+      stream: true,
     })
 
-    const aiResponse = response.choices[0].message.content || ''
-    const parsed = parseAIResponse(aiResponse)
+    // 建立 ReadableStream 回傳
+    const encoder = new TextEncoder()
+    let fullContent = ''
+    let usageData: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null
 
-    // 取得 token 使用量
-    const usage = response.usage
+    const readableStream = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const chunk of stream) {
+            const content = chunk.choices[0]?.delta?.content || ''
+            if (content) {
+              fullContent += content
+              // 發送文字內容
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'content', content })}\n\n`))
+            }
 
-    return NextResponse.json({
-      success: true,
-      data: parsed,
-      raw: aiResponse,
-      usage: usage
-        ? {
-            model: 'gpt-5',
-            promptTokens: usage.prompt_tokens,
-            completionTokens: usage.completion_tokens,
-            totalTokens: usage.total_tokens,
+            // 檢查是否有 usage 資訊（在最後一個 chunk）
+            if (chunk.usage) {
+              usageData = chunk.usage
+            }
           }
-        : null,
+
+          // 發送完成訊號和 usage 資訊
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+            type: 'done',
+            fullContent,
+            usage: usageData ? {
+              model: 'gpt-5',
+              promptTokens: usageData.prompt_tokens,
+              completionTokens: usageData.completion_tokens,
+              totalTokens: usageData.total_tokens,
+            } : null
+          })}\n\n`))
+
+          controller.close()
+        } catch (error) {
+          console.error('Streaming error:', error)
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: 'Streaming failed' })}\n\n`))
+          controller.close()
+        }
+      },
+    })
+
+    return new Response(readableStream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
     })
   } catch (error) {
-    console.error('Chat API Error:', error)
-    return NextResponse.json(
-      {
+    console.error('Chat Stream API Error:', error)
+    return new Response(
+      JSON.stringify({
         success: false,
         error: error instanceof Error ? error.message : '發生未知錯誤',
-      },
-      { status: 500 }
+      }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
     )
   }
 }

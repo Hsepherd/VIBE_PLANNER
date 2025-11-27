@@ -5,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAppStore, type AppState, type Task, type Project } from '@/lib/store'
 import { format } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
@@ -65,7 +64,7 @@ export default function ProjectsPage() {
   }
 
   return (
-    <ScrollArea className="flex-1">
+    <div className="flex-1 overflow-y-auto">
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">📁 專案管理</h1>
@@ -196,6 +195,6 @@ export default function ProjectsPage() {
           </div>
         )}
       </div>
-    </ScrollArea>
+    </div>
   )
 }

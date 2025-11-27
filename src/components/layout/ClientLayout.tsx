@@ -22,7 +22,7 @@ export default function ClientLayout({
       />
 
       {/* 主內容區 */}
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main className="flex-1 flex flex-col min-w-0">
         {/* 手機版頂部導航欄 */}
         <header className="md:hidden flex items-center gap-3 p-3 border-b bg-background">
           <MobileMenuButton onClick={() => setIsMobileMenuOpen(true)} />
@@ -33,7 +33,7 @@ export default function ClientLayout({
         </header>
 
         {/* 頁面內容 */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {children}
         </div>
       </main>

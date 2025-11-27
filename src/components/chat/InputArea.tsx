@@ -3,25 +3,25 @@
 import { useState, useRef, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { useAppStore, type Message } from '@/lib/store'
+import { useAppStore, type Message, type ExtractedTask } from '@/lib/store'
 import { Send, Paperclip, X, Loader2, Image as ImageIcon } from 'lucide-react'
-
-// AI 萃取任務的類型
-interface ExtractedTask {
-  title: string
-  description?: string
-  due_date?: string
-  assignee?: string
-  priority?: 'low' | 'medium' | 'high' | 'urgent'
-  project?: string
-}
+import { parseAIResponse } from '@/lib/utils-client'
 
 export default function InputArea() {
   const [input, setInput] = useState('')
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const { addMessage, messages, isLoading, setIsLoading, addApiUsage, addTask } = useAppStore()
+  const {
+    addMessage,
+    messages,
+    isLoading,
+    setIsLoading,
+    addApiUsage,
+    appendStreamingContent,
+    clearStreamingContent,
+    setPendingTasks
+  } = useAppStore()
 
   const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -57,6 +57,7 @@ export default function InputArea() {
     setInput('')
     setImagePreview(null)
     setIsLoading(true)
+    clearStreamingContent()
 
     try {
       // 準備歷史訊息
@@ -71,8 +72,8 @@ export default function InputArea() {
         content: userMessage,
       })
 
-      // 呼叫 API
-      const response = await fetch('/api/chat', {
+      // 呼叫 Streaming API
+      const response = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -83,46 +84,74 @@ export default function InputArea() {
         }),
       })
 
-      const data = await response.json()
+      if (!response.ok) {
+        throw new Error('API 請求失敗')
+      }
 
-      if (data.success) {
-        addMessage({
-          role: 'assistant',
-          content: data.raw || data.data?.message || '抱歉，我無法處理這個請求。',
-        })
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('無法讀取回應')
+      }
 
-        // 處理萃取出的任務
-        if (data.data?.type === 'tasks_extracted' && data.data.tasks) {
-          const tasks = data.data.tasks as ExtractedTask[]
-          tasks.forEach((task: ExtractedTask) => {
-            addTask({
-              title: task.title,
-              description: task.description || '',
-              status: 'pending',
-              priority: task.priority || 'medium',
-              dueDate: task.due_date ? new Date(task.due_date) : undefined,
-              assignee: task.assignee || undefined,
-              project: task.project || undefined,
-            })
-          })
+      const decoder = new TextDecoder()
+      let fullContent = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        const chunk = decoder.decode(value)
+        const lines = chunk.split('\n')
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+
+              if (data.type === 'content') {
+                fullContent += data.content
+                appendStreamingContent(data.content)
+              } else if (data.type === 'done') {
+                // 解析完整內容
+                const parsed = parseAIResponse(fullContent)
+                const messageContent = parsed.message || fullContent
+
+                // 清除 streaming，加入完整訊息
+                clearStreamingContent()
+                addMessage({
+                  role: 'assistant',
+                  content: messageContent,
+                })
+
+                // 如果有萃取出的任務，設定為待確認
+                if (parsed.type === 'tasks_extracted' && parsed.tasks && parsed.tasks.length > 0) {
+                  setPendingTasks(parsed.tasks as ExtractedTask[])
+                }
+
+                // 記錄 API 使用量
+                if (data.usage) {
+                  addApiUsage({
+                    model: data.usage.model,
+                    promptTokens: data.usage.promptTokens,
+                    completionTokens: data.usage.completionTokens,
+                  })
+                }
+              } else if (data.type === 'error') {
+                clearStreamingContent()
+                addMessage({
+                  role: 'assistant',
+                  content: `❌ 發生錯誤：${data.error}`,
+                })
+              }
+            } catch {
+              // 忽略解析錯誤
+            }
+          }
         }
-
-        // 記錄 API 使用量
-        if (data.usage) {
-          addApiUsage({
-            model: data.usage.model,
-            promptTokens: data.usage.promptTokens,
-            completionTokens: data.usage.completionTokens,
-          })
-        }
-      } else {
-        addMessage({
-          role: 'assistant',
-          content: `❌ 發生錯誤：${data.error || '未知錯誤'}`,
-        })
       }
     } catch (error) {
       console.error('Error:', error)
+      clearStreamingContent()
       addMessage({
         role: 'assistant',
         content: '❌ 連線發生錯誤，請稍後再試。',

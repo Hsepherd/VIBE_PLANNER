@@ -51,11 +51,16 @@ export interface ApiUsageRecord {
   cost: number // USD
 }
 
-// GPT-4.1 Mini 價格 (per 1M tokens)
+// GPT-5 價格 (per 1M tokens)
+// 參考: https://openai.com/api/pricing/
 const PRICING = {
-  'gpt-4.1-mini': {
-    input: 0.40,  // $0.40 per 1M input tokens
-    output: 1.60, // $1.60 per 1M output tokens
+  'gpt-5': {
+    input: 2.00,   // $2.00 per 1M input tokens (估計)
+    output: 8.00,  // $8.00 per 1M output tokens (估計)
+  },
+  'gpt-4o': {
+    input: 2.50,   // $2.50 per 1M input tokens
+    output: 10.00, // $10.00 per 1M output tokens
   },
 } as const
 
@@ -87,6 +92,27 @@ export interface AppState {
   // UI 狀態
   isLoading: boolean
   setIsLoading: (loading: boolean) => void
+
+  // Streaming 狀態
+  streamingContent: string
+  setStreamingContent: (content: string) => void
+  appendStreamingContent: (content: string) => void
+  clearStreamingContent: () => void
+
+  // 待確認任務
+  pendingTasks: ExtractedTask[]
+  setPendingTasks: (tasks: ExtractedTask[]) => void
+  clearPendingTasks: () => void
+}
+
+// AI 萃取任務的類型
+export interface ExtractedTask {
+  title: string
+  description?: string
+  due_date?: string
+  assignee?: string
+  priority?: 'low' | 'medium' | 'high' | 'urgent'
+  project?: string
 }
 
 // 生成 UUID
@@ -181,7 +207,7 @@ export const useAppStore = create<AppState>()(
       apiUsage: [],
       addApiUsage: ({ model, promptTokens, completionTokens }) =>
         set((state) => {
-          const pricing = PRICING[model as keyof typeof PRICING] || PRICING['gpt-4.1-mini']
+          const pricing = PRICING[model as keyof typeof PRICING] || PRICING['gpt-5']
           const cost =
             (promptTokens / 1_000_000) * pricing.input +
             (completionTokens / 1_000_000) * pricing.output
@@ -206,6 +232,19 @@ export const useAppStore = create<AppState>()(
       // UI 狀態
       isLoading: false,
       setIsLoading: (loading) => set({ isLoading: loading }),
+
+      // Streaming 狀態
+      streamingContent: '',
+      setStreamingContent: (content) => set({ streamingContent: content }),
+      appendStreamingContent: (content) => set((state) => ({
+        streamingContent: state.streamingContent + content
+      })),
+      clearStreamingContent: () => set({ streamingContent: '' }),
+
+      // 待確認任務
+      pendingTasks: [],
+      setPendingTasks: (tasks) => set({ pendingTasks: tasks }),
+      clearPendingTasks: () => set({ pendingTasks: [] }),
     }),
     {
       name: 'vibe-planner-storage',

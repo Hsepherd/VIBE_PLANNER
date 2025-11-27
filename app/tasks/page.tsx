@@ -5,10 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { useAppStore, type AppState, type Task } from '@/lib/store'
-import { format } from 'date-fns'
+import { format, isToday, isTomorrow, isThisWeek, isPast, addDays, startOfDay } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
 import {
   Check,
@@ -18,7 +17,10 @@ import {
   Filter,
   ChevronDown,
   ChevronRight,
+  ArrowUpDown,
 } from 'lucide-react'
+
+type SortMode = 'priority' | 'dueDate'
 
 export default function TasksPage() {
   const tasks = useAppStore((state: AppState) => state.tasks)
@@ -30,6 +32,7 @@ export default function TasksPage() {
   const [newTaskTitle, setNewTaskTitle] = useState('')
   const [filter, setFilter] = useState<'all' | 'pending' | 'completed'>('all')
   const [showCompleted, setShowCompleted] = useState(false)
+  const [sortMode, setSortMode] = useState<SortMode>('priority')
 
   // 過濾任務
   const filteredTasks = tasks.filter((task: Task) => {
@@ -42,11 +45,40 @@ export default function TasksPage() {
   const completedTasks = tasks.filter((t: Task) => t.status === 'completed')
 
   // 按優先級分組
-  const groupedTasks = {
+  const groupedByPriority = {
     urgent: filteredTasks.filter((t: Task) => t.priority === 'urgent'),
     high: filteredTasks.filter((t: Task) => t.priority === 'high'),
     medium: filteredTasks.filter((t: Task) => t.priority === 'medium'),
     low: filteredTasks.filter((t: Task) => t.priority === 'low'),
+  }
+
+  // 按截止日期分組
+  const today = startOfDay(new Date())
+  const groupedByDueDate = {
+    overdue: filteredTasks.filter((t: Task) => {
+      if (!t.dueDate) return false
+      const due = startOfDay(new Date(t.dueDate))
+      return isPast(due) && !isToday(due)
+    }),
+    today: filteredTasks.filter((t: Task) => {
+      if (!t.dueDate) return false
+      return isToday(new Date(t.dueDate))
+    }),
+    tomorrow: filteredTasks.filter((t: Task) => {
+      if (!t.dueDate) return false
+      return isTomorrow(new Date(t.dueDate))
+    }),
+    thisWeek: filteredTasks.filter((t: Task) => {
+      if (!t.dueDate) return false
+      const due = new Date(t.dueDate)
+      return !isToday(due) && !isTomorrow(due) && isThisWeek(due, { weekStartsOn: 1 }) && !isPast(startOfDay(due))
+    }),
+    later: filteredTasks.filter((t: Task) => {
+      if (!t.dueDate) return false
+      const due = new Date(t.dueDate)
+      return due > addDays(today, 7)
+    }),
+    noDueDate: filteredTasks.filter((t: Task) => !t.dueDate),
   }
 
   // 新增任務
@@ -174,11 +206,33 @@ export default function TasksPage() {
   }
 
   return (
-    <ScrollArea className="flex-1">
+    <div className="flex-1 overflow-y-auto">
       <div className="p-6 space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <h1 className="text-2xl font-bold">📋 任務列表</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* 排序模式 */}
+            <div className="flex items-center border rounded-lg overflow-hidden">
+              <Button
+                variant={sortMode === 'priority' ? 'default' : 'ghost'}
+                size="sm"
+                className="rounded-none"
+                onClick={() => setSortMode('priority')}
+              >
+                <ArrowUpDown className="h-3 w-3 mr-1" />
+                優先級
+              </Button>
+              <Button
+                variant={sortMode === 'dueDate' ? 'default' : 'ghost'}
+                size="sm"
+                className="rounded-none"
+                onClick={() => setSortMode('dueDate')}
+              >
+                <Calendar className="h-3 w-3 mr-1" />
+                截止日
+              </Button>
+            </div>
+            {/* 過濾 */}
             <Button
               variant={filter === 'all' ? 'default' : 'outline'}
               size="sm"
@@ -216,60 +270,142 @@ export default function TasksPage() {
 
         {/* 任務列表 */}
         <div className="space-y-6">
-          {/* 緊急 */}
-          {groupedTasks.urgent.length > 0 && (
-            <div className="space-y-2">
-              <h2 className="font-semibold text-destructive flex items-center gap-2">
-                🔴 緊急 ({groupedTasks.urgent.length})
-              </h2>
-              <div className="space-y-2">
-                {groupedTasks.urgent.map((task: Task) => (
-                  <TaskItem key={task.id} task={task} />
-                ))}
-              </div>
-            </div>
-          )}
+          {sortMode === 'priority' ? (
+            <>
+              {/* 按優先級分組 */}
+              {groupedByPriority.urgent.length > 0 && (
+                <div className="space-y-2">
+                  <h2 className="font-semibold text-destructive flex items-center gap-2">
+                    🔴 緊急 ({groupedByPriority.urgent.length})
+                  </h2>
+                  <div className="space-y-2">
+                    {groupedByPriority.urgent.map((task: Task) => (
+                      <TaskItem key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
+              )}
 
-          {/* 高優先級 */}
-          {groupedTasks.high.length > 0 && (
-            <div className="space-y-2">
-              <h2 className="font-semibold flex items-center gap-2">
-                🟠 高優先級 ({groupedTasks.high.length})
-              </h2>
-              <div className="space-y-2">
-                {groupedTasks.high.map((task: Task) => (
-                  <TaskItem key={task.id} task={task} />
-                ))}
-              </div>
-            </div>
-          )}
+              {groupedByPriority.high.length > 0 && (
+                <div className="space-y-2">
+                  <h2 className="font-semibold flex items-center gap-2">
+                    🟠 高優先級 ({groupedByPriority.high.length})
+                  </h2>
+                  <div className="space-y-2">
+                    {groupedByPriority.high.map((task: Task) => (
+                      <TaskItem key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
+              )}
 
-          {/* 中優先級 */}
-          {groupedTasks.medium.length > 0 && (
-            <div className="space-y-2">
-              <h2 className="font-semibold flex items-center gap-2">
-                🟡 中優先級 ({groupedTasks.medium.length})
-              </h2>
-              <div className="space-y-2">
-                {groupedTasks.medium.map((task: Task) => (
-                  <TaskItem key={task.id} task={task} />
-                ))}
-              </div>
-            </div>
-          )}
+              {groupedByPriority.medium.length > 0 && (
+                <div className="space-y-2">
+                  <h2 className="font-semibold flex items-center gap-2">
+                    🟡 中優先級 ({groupedByPriority.medium.length})
+                  </h2>
+                  <div className="space-y-2">
+                    {groupedByPriority.medium.map((task: Task) => (
+                      <TaskItem key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
+              )}
 
-          {/* 低優先級 */}
-          {groupedTasks.low.length > 0 && (
-            <div className="space-y-2">
-              <h2 className="font-semibold flex items-center gap-2">
-                🟢 低優先級 ({groupedTasks.low.length})
-              </h2>
-              <div className="space-y-2">
-                {groupedTasks.low.map((task: Task) => (
-                  <TaskItem key={task.id} task={task} />
-                ))}
-              </div>
-            </div>
+              {groupedByPriority.low.length > 0 && (
+                <div className="space-y-2">
+                  <h2 className="font-semibold flex items-center gap-2">
+                    🟢 低優先級 ({groupedByPriority.low.length})
+                  </h2>
+                  <div className="space-y-2">
+                    {groupedByPriority.low.map((task: Task) => (
+                      <TaskItem key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {/* 按截止日期分組 */}
+              {groupedByDueDate.overdue.length > 0 && (
+                <div className="space-y-2">
+                  <h2 className="font-semibold text-destructive flex items-center gap-2">
+                    ⚠️ 已過期 ({groupedByDueDate.overdue.length})
+                  </h2>
+                  <div className="space-y-2">
+                    {groupedByDueDate.overdue.map((task: Task) => (
+                      <TaskItem key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {groupedByDueDate.today.length > 0 && (
+                <div className="space-y-2">
+                  <h2 className="font-semibold text-orange-600 dark:text-orange-400 flex items-center gap-2">
+                    📅 今天 ({groupedByDueDate.today.length})
+                  </h2>
+                  <div className="space-y-2">
+                    {groupedByDueDate.today.map((task: Task) => (
+                      <TaskItem key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {groupedByDueDate.tomorrow.length > 0 && (
+                <div className="space-y-2">
+                  <h2 className="font-semibold text-yellow-600 dark:text-yellow-400 flex items-center gap-2">
+                    📆 明天 ({groupedByDueDate.tomorrow.length})
+                  </h2>
+                  <div className="space-y-2">
+                    {groupedByDueDate.tomorrow.map((task: Task) => (
+                      <TaskItem key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {groupedByDueDate.thisWeek.length > 0 && (
+                <div className="space-y-2">
+                  <h2 className="font-semibold flex items-center gap-2">
+                    🗓️ 本週 ({groupedByDueDate.thisWeek.length})
+                  </h2>
+                  <div className="space-y-2">
+                    {groupedByDueDate.thisWeek.map((task: Task) => (
+                      <TaskItem key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {groupedByDueDate.later.length > 0 && (
+                <div className="space-y-2">
+                  <h2 className="font-semibold text-muted-foreground flex items-center gap-2">
+                    📋 稍後 ({groupedByDueDate.later.length})
+                  </h2>
+                  <div className="space-y-2">
+                    {groupedByDueDate.later.map((task: Task) => (
+                      <TaskItem key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {groupedByDueDate.noDueDate.length > 0 && (
+                <div className="space-y-2">
+                  <h2 className="font-semibold text-muted-foreground flex items-center gap-2">
+                    📝 無截止日 ({groupedByDueDate.noDueDate.length})
+                  </h2>
+                  <div className="space-y-2">
+                    {groupedByDueDate.noDueDate.map((task: Task) => (
+                      <TaskItem key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           {filteredTasks.length === 0 && filter !== 'completed' && (
@@ -311,6 +447,6 @@ export default function TasksPage() {
           )}
         </div>
       </div>
-    </ScrollArea>
+    </div>
   )
 }

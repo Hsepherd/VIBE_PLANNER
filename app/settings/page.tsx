@@ -2,7 +2,6 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { useAppStore, type AppState, type ApiUsageRecord } from '@/lib/store'
 import { Trash2, Download, AlertTriangle, DollarSign, Cloud, CheckCircle2 } from 'lucide-react'
@@ -51,7 +50,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <ScrollArea className="flex-1">
+    <div className="flex-1 overflow-y-auto">
       <div className="p-6 space-y-6 max-w-2xl">
         <h1 className="text-2xl font-bold">⚙️ 設定</h1>
 
@@ -270,6 +269,6 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </div>
-    </ScrollArea>
+    </div>
   )
 }
