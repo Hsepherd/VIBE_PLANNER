@@ -8,6 +8,7 @@ import { Message, useAppStore, type AppState, type Task } from '@/lib/store'
 import { format } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
 import { Check, Clock, User, Bot } from 'lucide-react'
+import { FeedbackButtons } from '@/components/feedback'
 
 interface MessageBubbleProps {
   message: Message
@@ -172,9 +173,18 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           )}
         </Card>
 
-        <span className="text-xs text-muted-foreground px-1">
-          {format(new Date(message.timestamp), 'HH:mm', { locale: zhTW })}
-        </span>
+        <div className="flex items-center gap-2 px-1">
+          <span className="text-xs text-muted-foreground">
+            {format(new Date(message.timestamp), 'HH:mm', { locale: zhTW })}
+          </span>
+          {/* AI 訊息顯示回饋按鈕 */}
+          {!isUser && (
+            <FeedbackButtons
+              messageContent={message.content}
+              context={{ messageId: message.id }}
+            />
+          )}
+        </div>
       </div>
     </div>
   )

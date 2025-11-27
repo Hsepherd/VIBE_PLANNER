@@ -230,8 +230,8 @@ export const getMeetingTranscriptPrompt = () => {
 // 舊的靜態 SYSTEM_PROMPT（保留向後相容）
 export const SYSTEM_PROMPT = getFullSystemPrompt()
 
-// 檢測是否為長篇會議逐字稿
-function isLongMeetingTranscript(text: string): boolean {
+// 檢測是否為長篇會議逐字稿（導出供其他模組使用）
+export function isLongMeetingTranscript(text: string): boolean {
   // 長度超過 3000 字元，且包含會議相關關鍵字
   const meetingKeywords = [
     '會議', '討論', '報告', '決議', '行動項目', '待辦',

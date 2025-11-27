@@ -6,6 +6,7 @@ import { Separator } from '@/components/ui/separator'
 import { useAppStore, type AppState, type ApiUsageRecord } from '@/lib/store'
 import { Trash2, Download, AlertTriangle, DollarSign, Cloud, CheckCircle2 } from 'lucide-react'
 import { useState } from 'react'
+import { LearningStatus } from '@/components/preferences'
 
 export default function SettingsPage() {
   const clearMessages = useAppStore((state: AppState) => state.clearMessages)
@@ -53,6 +54,9 @@ export default function SettingsPage() {
     <div className="flex-1 overflow-y-auto">
       <div className="p-6 space-y-6 max-w-2xl">
         <h1 className="text-2xl font-bold">⚙️ 設定</h1>
+
+        {/* AI 學習狀態 */}
+        <LearningStatus />
 
         {/* 雲端同步狀態 */}
         <Card>

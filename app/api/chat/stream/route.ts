@@ -1,21 +1,6 @@
 import { NextRequest } from 'next/server'
-import openai, { getFullSystemPrompt, getMeetingTranscriptPrompt } from '@/lib/openai'
-
-// 檢測是否為長篇會議逐字稿
-function isLongMeetingTranscript(text: string): boolean {
-  const meetingKeywords = [
-    '會議', '討論', '報告', '決議', '行動項目', '待辦',
-    '負責人', '時間', '進度', '專案', '問題', '解決',
-    '同意', '確認', '下週', '明天', '截止', 'meeting',
-    ':', '：',
-  ]
-
-  const hasKeywords = meetingKeywords.some(keyword =>
-    text.toLowerCase().includes(keyword.toLowerCase())
-  )
-
-  return text.length > 3000 && hasKeywords
-}
+import openai, { getFullSystemPrompt, getMeetingTranscriptPrompt, isLongMeetingTranscript } from '@/lib/openai'
+import { generatePreferencePrompt, shouldInjectPreferences } from '@/lib/preferences'
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,7 +12,20 @@ export async function POST(request: NextRequest) {
     const isLongTranscript = lastUserMessage && isLongMeetingTranscript(lastUserMessage.content)
 
     // 根據內容類型選擇不同的 prompt
-    const systemPrompt = isLongTranscript ? getMeetingTranscriptPrompt() : getFullSystemPrompt()
+    let systemPrompt = isLongTranscript ? getMeetingTranscriptPrompt() : getFullSystemPrompt()
+
+    // 如果符合條件，注入使用者偏好
+    if (lastUserMessage && shouldInjectPreferences(lastUserMessage.content)) {
+      try {
+        const preferencePrompt = await generatePreferencePrompt()
+        if (preferencePrompt) {
+          systemPrompt += '\n' + preferencePrompt
+        }
+      } catch (error) {
+        console.error('載入偏好設定失敗:', error)
+        // 即使偏好載入失敗，仍繼續處理請求
+      }
+    }
 
     // 構建訊息陣列
     const chatMessages: Array<{

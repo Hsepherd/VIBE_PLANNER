@@ -9,6 +9,8 @@ import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Bot, Check, X, CheckSquare, Square, Clock, Loader2 } from 'lucide-react'
+import { RejectReasonSelector } from '@/components/feedback'
+import { recordPositiveExample, recordNegativeExample } from '@/lib/preferences'
 
 export default function ChatWindow() {
   const messages = useAppStore((state: AppState) => state.messages)
@@ -18,16 +20,25 @@ export default function ChatWindow() {
   const clearPendingTasks = useAppStore((state: AppState) => state.clearPendingTasks)
   const addTask = useAppStore((state: AppState) => state.addTask)
 
+  const lastInputContext = useAppStore((state: AppState) => state.lastInputContext)
+
   const scrollRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // 選中的任務
   const [selectedTasks, setSelectedTasks] = useState<Set<number>>(new Set())
+  // 顯示拒絕原因選擇器的任務索引
+  const [showRejectReason, setShowRejectReason] = useState<number | null>(null)
+  // 上一次選中狀態（用於檢測取消勾選）
+  const [prevSelected, setPrevSelected] = useState<Set<number>>(new Set())
 
   // 當有新的待確認任務時，預設全選
   useEffect(() => {
     if (pendingTasks.length > 0) {
-      setSelectedTasks(new Set(pendingTasks.map((_, index) => index)))
+      const allSelected = new Set(pendingTasks.map((_, index) => index))
+      setSelectedTasks(allSelected)
+      setPrevSelected(allSelected)
+      setShowRejectReason(null)
     }
   }, [pendingTasks])
 
@@ -44,9 +55,16 @@ export default function ChatWindow() {
       const next = new Set(prev)
       if (next.has(index)) {
         next.delete(index)
+        // 取消勾選時顯示拒絕原因選擇器
+        setShowRejectReason(index)
       } else {
         next.add(index)
+        // 重新勾選時隱藏拒絕原因選擇器
+        if (showRejectReason === index) {
+          setShowRejectReason(null)
+        }
       }
+      setPrevSelected(prev)
       return next
     })
   }
@@ -61,9 +79,12 @@ export default function ChatWindow() {
   }
 
   // 確認加入選中的任務
-  const handleConfirmTasks = () => {
-    pendingTasks.forEach((task, index) => {
+  const handleConfirmTasks = async () => {
+    // 記錄正面範例（被選中的任務）
+    for (let index = 0; index < pendingTasks.length; index++) {
+      const task = pendingTasks[index]
       if (selectedTasks.has(index)) {
+        // 加入任務
         addTask({
           title: task.title,
           description: task.description || '',
@@ -73,16 +94,39 @@ export default function ChatWindow() {
           assignee: task.assignee || undefined,
           project: task.project || undefined,
         })
+        // 記錄正面範例（背景執行，不阻塞 UI）
+        recordPositiveExample(
+          task as unknown as Record<string, unknown>,
+          undefined,
+          lastInputContext.slice(0, 500) // 只取前 500 字
+        ).catch(console.error)
+      } else {
+        // 未選中的任務記錄為負面範例
+        recordNegativeExample(
+          task as unknown as Record<string, unknown>,
+          undefined,
+          lastInputContext.slice(0, 500)
+        ).catch(console.error)
       }
+    }
+    clearPendingTasks()
+    setSelectedTasks(new Set())
+    setShowRejectReason(null)
+  }
+
+  // 取消（所有任務都記錄為負面範例）
+  const handleCancelTasks = () => {
+    // 記錄所有任務為負面範例
+    pendingTasks.forEach((task) => {
+      recordNegativeExample(
+        task as unknown as Record<string, unknown>,
+        'cancelled_all',
+        lastInputContext.slice(0, 500)
+      ).catch(console.error)
     })
     clearPendingTasks()
     setSelectedTasks(new Set())
-  }
-
-  // 取消
-  const handleCancelTasks = () => {
-    clearPendingTasks()
-    setSelectedTasks(new Set())
+    setShowRejectReason(null)
   }
 
   return (
@@ -221,6 +265,16 @@ export default function ChatWindow() {
                           </Badge>
                         )}
                       </div>
+                      {/* 取消勾選時顯示拒絕原因選擇器 */}
+                      {showRejectReason === index && !selectedTasks.has(index) && (
+                        <div className="mt-2 pt-2 border-t border-border/50" onClick={(e) => e.stopPropagation()}>
+                          <RejectReasonSelector
+                            task={task as unknown as Record<string, unknown>}
+                            contextSnippet={lastInputContext.slice(0, 500)}
+                            onReasonSelected={() => setShowRejectReason(null)}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}

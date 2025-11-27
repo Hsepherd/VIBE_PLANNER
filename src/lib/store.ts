@@ -103,6 +103,10 @@ export interface AppState {
   pendingTasks: ExtractedTask[]
   setPendingTasks: (tasks: ExtractedTask[]) => void
   clearPendingTasks: () => void
+
+  // AI 學習偏好
+  lastInputContext: string  // 最後一次輸入的上下文（用於學習）
+  setLastInputContext: (context: string) => void
 }
 
 // AI 萃取任務的類型
@@ -245,6 +249,10 @@ export const useAppStore = create<AppState>()(
       pendingTasks: [],
       setPendingTasks: (tasks) => set({ pendingTasks: tasks }),
       clearPendingTasks: () => set({ pendingTasks: [] }),
+
+      // AI 學習偏好
+      lastInputContext: '',
+      setLastInputContext: (context) => set({ lastInputContext: context }),
     }),
     {
       name: 'vibe-planner-storage',

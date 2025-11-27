@@ -20,7 +20,8 @@ export default function InputArea() {
     addApiUsage,
     appendStreamingContent,
     clearStreamingContent,
-    setPendingTasks
+    setPendingTasks,
+    setLastInputContext,
   } = useAppStore()
 
   const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -52,6 +53,9 @@ export default function InputArea() {
       content: userMessage,
       metadata: imagePreview ? { imageUrl: imagePreview } : undefined,
     })
+
+    // 記錄輸入上下文（用於 AI 學習）
+    setLastInputContext(userMessage)
 
     const currentImage = imagePreview
     setInput('')
