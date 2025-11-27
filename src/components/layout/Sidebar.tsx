@@ -1,10 +1,11 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useAppStore, type AppState, type Task } from '@/lib/store'
+import { useAuth } from '@/lib/useAuth'
 import {
   MessageSquare,
   LayoutDashboard,
@@ -17,7 +18,14 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  LogOut,
+  User,
+  Users,
+  Shield,
 } from 'lucide-react'
+
+// 管理員 email（與後端保持一致）
+const ADMIN_EMAIL = 'xk4xk4563022@gmail.com'
 import { useState, useEffect } from 'react'
 
 const navItems = [
@@ -121,81 +129,146 @@ function SidebarContent({ onNavigate, collapsed = false }: { onNavigate?: () => 
   )
 }
 
-// 桌面版側邊欄內容（不含 Logo，Logo 由父層處理）
+// 桌面版側邊欄內容（不含 Logo，Logo 由父層處理）- Acctual 風格
 function SidebarContentWithoutLogo({ collapsed = false }: { collapsed?: boolean }) {
   const pathname = usePathname()
+  const router = useRouter()
   const tasks = useAppStore((state: AppState) => state.tasks)
   const clearMessages = useAppStore((state: AppState) => state.clearMessages)
+  const { user, signOut } = useAuth()
 
   const pendingTasksCount = tasks.filter((t: Task) => t.status === 'pending').length
   const urgentTasksCount = tasks.filter(
     (t: Task) => t.status !== 'completed' && t.priority === 'urgent'
   ).length
 
+  const handleSignOut = async () => {
+    await signOut()
+    router.push('/login')
+  }
+
+  // 取得使用者顯示名稱
+  const displayName = user?.user_metadata?.name || user?.email?.split('@')[0] || '使用者'
+  const userEmail = user?.email || ''
+
   return (
     <>
-      {/* 導航 */}
-      <nav className={`flex-1 ${collapsed ? 'p-2' : 'p-4'} space-y-1`}>
+      {/* 導航 - Acctual 風格 */}
+      <nav className={`flex-1 ${collapsed ? 'px-2 py-3' : 'px-3 py-3'} space-y-0.5`}>
         {navItems.map((item) => {
           const isActive = pathname === item.href
           const Icon = item.icon
 
           return (
             <Link key={item.href} href={item.href} title={collapsed ? item.label : undefined}>
-              <Button
-                variant={isActive ? 'secondary' : 'ghost'}
-                className={`w-full transition-all duration-200 ${collapsed ? 'justify-center px-2' : 'justify-start gap-2'}`}
+              <div
+                className={`
+                  flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 cursor-pointer
+                  ${isActive
+                    ? 'bg-muted font-medium text-foreground'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                  }
+                  ${collapsed ? 'justify-center px-2' : ''}
+                `}
               >
-                <Icon className="h-4 w-4 shrink-0" />
-                <span className={`whitespace-nowrap transition-all duration-200 ${collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'}`}>
-                  {item.label}
-                </span>
-                {!collapsed && item.href === '/tasks' && pendingTasksCount > 0 && (
-                  <Badge variant="secondary" className="ml-auto">
-                    {pendingTasksCount}
-                  </Badge>
+                <Icon className="h-[18px] w-[18px] shrink-0" />
+                {!collapsed && (
+                  <span className="text-sm">{item.label}</span>
                 )}
-              </Button>
+                {!collapsed && item.href === '/tasks' && pendingTasksCount > 0 && (
+                  <span className="ml-auto text-xs bg-muted-foreground/20 text-muted-foreground px-1.5 py-0.5 rounded-md">
+                    {pendingTasksCount}
+                  </span>
+                )}
+              </div>
             </Link>
           )
         })}
       </nav>
 
-      {/* 統計 */}
-      <div className={`border-t space-y-2 transition-all duration-200 overflow-hidden ${collapsed ? 'p-0 h-0 opacity-0' : 'p-4 opacity-100'}`}>
+      {/* 統計 - 簡化 */}
+      <div className={`space-y-1 transition-all duration-200 overflow-hidden ${collapsed ? 'p-0 h-0 opacity-0' : 'px-3 py-2 opacity-100'}`}>
         {urgentTasksCount > 0 && (
-          <div className="flex items-center gap-2 text-sm text-destructive whitespace-nowrap">
-            <span className="text-lg">🔴</span>
-            <span>{urgentTasksCount} 個緊急任務</span>
+          <div className="flex items-center gap-2 text-xs text-red-500 px-3">
+            <span>🔴</span>
+            <span>{urgentTasksCount} 個緊急</span>
           </div>
         )}
-        <div className="flex items-center gap-2 text-sm text-muted-foreground whitespace-nowrap">
-          <span className="text-lg">📋</span>
-          <span>{pendingTasksCount} 個待辦任務</span>
-        </div>
       </div>
 
-      {/* 底部操作 */}
-      <div className={`${collapsed ? 'p-2' : 'p-4'} border-t space-y-2`}>
-        <Button
-          variant="ghost"
-          className={`w-full transition-all duration-200 ${collapsed ? 'justify-center px-2' : 'justify-start gap-2'} text-muted-foreground`}
+      {/* 底部操作 - Acctual 風格 */}
+      <div className={`${collapsed ? 'px-2 py-3' : 'px-3 py-3'} border-t space-y-0.5`}>
+        <button
+          className={`
+            w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200
+            text-muted-foreground hover:text-foreground hover:bg-muted/50 text-sm
+            ${collapsed ? 'justify-center px-2' : ''}
+          `}
           onClick={() => clearMessages()}
           title={collapsed ? '清除對話' : undefined}
         >
-          <Trash2 className="h-4 w-4 shrink-0" />
-          <span className={`whitespace-nowrap transition-all duration-200 ${collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'}`}>
-            清除對話
-          </span>
-        </Button>
+          <Trash2 className="h-[18px] w-[18px] shrink-0" />
+          {!collapsed && <span>清除對話</span>}
+        </button>
         <Link href="/settings" title={collapsed ? '設定' : undefined}>
-          <Button variant="ghost" className={`w-full transition-all duration-200 ${collapsed ? 'justify-center px-2' : 'justify-start gap-2'} text-muted-foreground`}>
-            <Settings className="h-4 w-4 shrink-0" />
-            <span className={`whitespace-nowrap transition-all duration-200 ${collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'}`}>
-              設定
-            </span>
-          </Button>
+          <div
+            className={`
+              w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200
+              text-muted-foreground hover:text-foreground hover:bg-muted/50 text-sm
+              ${collapsed ? 'justify-center px-2' : ''}
+            `}
+          >
+            <Settings className="h-[18px] w-[18px] shrink-0" />
+            {!collapsed && <span>設定</span>}
+          </div>
         </Link>
+        {/* 管理員專屬：使用者管理 */}
+        {user?.email === ADMIN_EMAIL && (
+          <Link href="/admin/users" title={collapsed ? '使用者管理' : undefined}>
+            <div
+              className={`
+                w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200
+                text-amber-600 hover:text-amber-700 hover:bg-amber-50 text-sm
+                ${collapsed ? 'justify-center px-2' : ''}
+                ${pathname === '/admin/users' ? 'bg-amber-50' : ''}
+              `}
+            >
+              <Shield className="h-[18px] w-[18px] shrink-0" />
+              {!collapsed && <span>使用者管理</span>}
+            </div>
+          </Link>
+        )}
+      </div>
+
+      {/* 使用者資訊和登出 */}
+      <div className={`${collapsed ? 'px-2 py-3' : 'px-3 py-3'} border-t`}>
+        {/* 使用者資訊 */}
+        {!collapsed && user && (
+          <div className="px-3 py-2 mb-1">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
+                <User className="h-4 w-4 text-gray-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{displayName}</p>
+                <p className="text-xs text-muted-foreground truncate">{userEmail}</p>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* 登出按鈕 */}
+        <button
+          className={`
+            w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200
+            text-muted-foreground hover:text-red-600 hover:bg-red-50 text-sm
+            ${collapsed ? 'justify-center px-2' : ''}
+          `}
+          onClick={handleSignOut}
+          title={collapsed ? '登出' : undefined}
+        >
+          <LogOut className="h-[18px] w-[18px] shrink-0" />
+          {!collapsed && <span>登出</span>}
+        </button>
       </div>
     </>
   )
@@ -286,9 +359,9 @@ export default function Sidebar() {
   return (
     <aside
       className={`
-        hidden md:flex border-r bg-muted/30 flex-col relative
+        hidden md:flex border-r bg-background flex-col relative
         transition-[width] duration-300 ease-in-out
-        ${collapsed ? 'w-16' : 'w-64'}
+        ${collapsed ? 'w-16' : 'w-56'}
       `}
     >
       {/* 展開/收合按鈕 - 固定在右邊線上置中 */}
@@ -304,12 +377,14 @@ export default function Sidebar() {
         )}
       </button>
 
-      {/* 頂部：Logo */}
-      <div className="p-3 border-b flex items-center justify-center">
-        <Link href="/" className={collapsed ? "" : "flex items-center gap-2"}>
-          <span className="font-bold text-lg">Hz</span>
+      {/* 頂部：Logo - Acctual 風格 */}
+      <div className="p-4 border-b flex items-center">
+        <Link href="/" className="flex items-center gap-2">
+          <div className="w-7 h-7 bg-black rounded-md flex items-center justify-center">
+            <span className="text-white font-bold text-sm">Hz</span>
+          </div>
           {!collapsed && (
-            <span className="text-sm text-muted-foreground">Planner</span>
+            <span className="font-semibold text-base">Planner</span>
           )}
         </Link>
       </div>

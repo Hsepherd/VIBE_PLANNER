@@ -1,4 +1,17 @@
-import { supabase } from './supabase'
+'use client'
+
+import { createClient } from './supabase-client'
+
+// 取得 Supabase client
+const getSupabase = () => createClient()
+
+// 取得目前使用者 ID
+const getCurrentUserId = async (): Promise<string> => {
+  const supabase = getSupabase()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('未登入')
+  return user.id
+}
 
 // ============ 類型定義 ============
 
@@ -8,6 +21,7 @@ export interface DbProject {
   description: string | null
   status: 'active' | 'completed' | 'archived'
   progress: number
+  user_id?: string
   created_at: string
   updated_at: string
 }
@@ -21,6 +35,9 @@ export interface DbTask {
   due_date: string | null
   assignee: string | null
   project_id: string | null
+  tags: string[] | null
+  group_name: string | null
+  user_id?: string
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -31,6 +48,7 @@ export interface DbConversation {
   role: 'user' | 'assistant'
   content: string
   metadata: Record<string, unknown> | null
+  user_id?: string
   created_at: string
 }
 
@@ -41,6 +59,7 @@ export interface DbApiUsage {
   completion_tokens: number
   total_tokens: number
   cost: number
+  user_id?: string
   created_at: string
 }
 
@@ -49,6 +68,7 @@ export interface DbApiUsage {
 export const projectsApi = {
   // 取得所有專案
   async getAll(): Promise<DbProject[]> {
+    const supabase = getSupabase()
     const { data, error } = await supabase
       .from('projects')
       .select('*')
@@ -60,6 +80,7 @@ export const projectsApi = {
 
   // 取得單一專案
   async getById(id: string): Promise<DbProject | null> {
+    const supabase = getSupabase()
     const { data, error } = await supabase
       .from('projects')
       .select('*')
@@ -71,10 +92,12 @@ export const projectsApi = {
   },
 
   // 建立專案
-  async create(project: Omit<DbProject, 'id' | 'created_at' | 'updated_at'>): Promise<DbProject> {
+  async create(project: Omit<DbProject, 'id' | 'created_at' | 'updated_at' | 'user_id'>): Promise<DbProject> {
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
     const { data, error } = await supabase
       .from('projects')
-      .insert(project)
+      .insert({ ...project, user_id: userId })
       .select()
       .single()
 
@@ -84,6 +107,7 @@ export const projectsApi = {
 
   // 更新專案
   async update(id: string, updates: Partial<DbProject>): Promise<DbProject> {
+    const supabase = getSupabase()
     const { data, error } = await supabase
       .from('projects')
       .update(updates)
@@ -97,6 +121,7 @@ export const projectsApi = {
 
   // 刪除專案
   async delete(id: string): Promise<void> {
+    const supabase = getSupabase()
     const { error } = await supabase.from('projects').delete().eq('id', id)
     if (error) throw error
   },
@@ -107,6 +132,7 @@ export const projectsApi = {
 export const tasksApi = {
   // 取得所有任務
   async getAll(): Promise<DbTask[]> {
+    const supabase = getSupabase()
     const { data, error } = await supabase
       .from('tasks')
       .select('*')
@@ -118,6 +144,7 @@ export const tasksApi = {
 
   // 取得單一任務
   async getById(id: string): Promise<DbTask | null> {
+    const supabase = getSupabase()
     const { data, error } = await supabase
       .from('tasks')
       .select('*')
@@ -130,6 +157,7 @@ export const tasksApi = {
 
   // 取得專案的任務
   async getByProjectId(projectId: string): Promise<DbTask[]> {
+    const supabase = getSupabase()
     const { data, error } = await supabase
       .from('tasks')
       .select('*')
@@ -142,9 +170,15 @@ export const tasksApi = {
 
   // 建立任務
   async create(
-    task: Omit<DbTask, 'id' | 'created_at' | 'updated_at' | 'completed_at'>
+    task: Omit<DbTask, 'id' | 'created_at' | 'updated_at' | 'completed_at' | 'user_id'>
   ): Promise<DbTask> {
-    const { data, error } = await supabase.from('tasks').insert(task).select().single()
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
+    const { data, error } = await supabase
+      .from('tasks')
+      .insert({ ...task, user_id: userId })
+      .select()
+      .single()
 
     if (error) throw error
     return data
@@ -152,6 +186,7 @@ export const tasksApi = {
 
   // 更新任務
   async update(id: string, updates: Partial<DbTask>): Promise<DbTask> {
+    const supabase = getSupabase()
     const { data, error } = await supabase
       .from('tasks')
       .update(updates)
@@ -165,6 +200,7 @@ export const tasksApi = {
 
   // 完成任務
   async complete(id: string): Promise<DbTask> {
+    const supabase = getSupabase()
     const { data, error } = await supabase
       .from('tasks')
       .update({
@@ -181,6 +217,7 @@ export const tasksApi = {
 
   // 刪除任務
   async delete(id: string): Promise<void> {
+    const supabase = getSupabase()
     const { error } = await supabase.from('tasks').delete().eq('id', id)
     if (error) throw error
   },
@@ -191,6 +228,7 @@ export const tasksApi = {
 export const conversationsApi = {
   // 取得所有對話（最近 N 條）
   async getRecent(limit = 50): Promise<DbConversation[]> {
+    const supabase = getSupabase()
     const { data, error } = await supabase
       .from('conversations')
       .select('*')
@@ -203,11 +241,13 @@ export const conversationsApi = {
 
   // 建立對話
   async create(
-    conversation: Omit<DbConversation, 'id' | 'created_at'>
+    conversation: Omit<DbConversation, 'id' | 'created_at' | 'user_id'>
   ): Promise<DbConversation> {
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
     const { data, error } = await supabase
       .from('conversations')
-      .insert(conversation)
+      .insert({ ...conversation, user_id: userId })
       .select()
       .single()
 
@@ -215,9 +255,14 @@ export const conversationsApi = {
     return data
   },
 
-  // 清除所有對話
+  // 清除所有對話（只刪除目前使用者的）
   async clear(): Promise<void> {
-    const { error } = await supabase.from('conversations').delete().neq('id', '')
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
+    const { error } = await supabase
+      .from('conversations')
+      .delete()
+      .eq('user_id', userId)
     if (error) throw error
   },
 }
@@ -227,6 +272,7 @@ export const conversationsApi = {
 export const apiUsageApi = {
   // 取得所有使用記錄
   async getAll(): Promise<DbApiUsage[]> {
+    const supabase = getSupabase()
     const { data, error } = await supabase
       .from('api_usage')
       .select('*')
@@ -238,11 +284,13 @@ export const apiUsageApi = {
 
   // 建立使用記錄
   async create(
-    usage: Omit<DbApiUsage, 'id' | 'created_at'>
+    usage: Omit<DbApiUsage, 'id' | 'created_at' | 'user_id'>
   ): Promise<DbApiUsage> {
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
     const { data, error } = await supabase
       .from('api_usage')
-      .insert(usage)
+      .insert({ ...usage, user_id: userId })
       .select()
       .single()
 
@@ -256,6 +304,7 @@ export const apiUsageApi = {
     totalTokens: number
     totalCalls: number
   }> {
+    const supabase = getSupabase()
     const { data, error } = await supabase.from('api_usage').select('*')
 
     if (error) throw error
@@ -270,105 +319,12 @@ export const apiUsageApi = {
 
   // 清除所有記錄
   async clear(): Promise<void> {
-    const { error } = await supabase.from('api_usage').delete().neq('id', '')
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
+    const { error } = await supabase
+      .from('api_usage')
+      .delete()
+      .eq('user_id', userId)
     if (error) throw error
   },
-}
-
-// ============ 資料同步工具 ============
-
-// 將本地資料同步到 Supabase
-export const syncToSupabase = async (localData: {
-  projects: Array<{
-    id: string
-    name: string
-    description?: string
-    status: 'active' | 'completed' | 'archived'
-    progress: number
-    createdAt: Date
-    updatedAt: Date
-  }>
-  tasks: Array<{
-    id: string
-    title: string
-    description?: string
-    status: 'pending' | 'in_progress' | 'completed'
-    priority: 'low' | 'medium' | 'high' | 'urgent'
-    dueDate?: Date
-    assignee?: string
-    projectId?: string
-    createdAt: Date
-    updatedAt: Date
-    completedAt?: Date
-  }>
-  messages: Array<{
-    id: string
-    role: 'user' | 'assistant'
-    content: string
-    timestamp: Date
-    metadata?: Record<string, unknown>
-  }>
-  apiUsage: Array<{
-    id: string
-    model: string
-    promptTokens: number
-    completionTokens: number
-    totalTokens: number
-    cost: number
-    timestamp: Date
-  }>
-}) => {
-  // 同步專案
-  for (const project of localData.projects) {
-    await supabase.from('projects').upsert({
-      id: project.id,
-      name: project.name,
-      description: project.description || null,
-      status: project.status,
-      progress: project.progress,
-      created_at: new Date(project.createdAt).toISOString(),
-      updated_at: new Date(project.updatedAt).toISOString(),
-    })
-  }
-
-  // 同步任務
-  for (const task of localData.tasks) {
-    await supabase.from('tasks').upsert({
-      id: task.id,
-      title: task.title,
-      description: task.description || null,
-      status: task.status,
-      priority: task.priority,
-      due_date: task.dueDate ? new Date(task.dueDate).toISOString() : null,
-      assignee: task.assignee || null,
-      project_id: task.projectId || null,
-      created_at: new Date(task.createdAt).toISOString(),
-      updated_at: new Date(task.updatedAt).toISOString(),
-      completed_at: task.completedAt ? new Date(task.completedAt).toISOString() : null,
-    })
-  }
-
-  // 同步對話
-  for (const message of localData.messages) {
-    await supabase.from('conversations').upsert({
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      metadata: message.metadata || null,
-      created_at: new Date(message.timestamp).toISOString(),
-    })
-  }
-
-  // 同步 API 使用量
-  for (const usage of localData.apiUsage) {
-    await supabase.from('api_usage').upsert({
-      id: usage.id,
-      model: usage.model,
-      prompt_tokens: usage.promptTokens,
-      completion_tokens: usage.completionTokens,
-      total_tokens: usage.totalTokens,
-      cost: usage.cost,
-      created_at: new Date(usage.timestamp).toISOString(),
-    })
-  }
 }
