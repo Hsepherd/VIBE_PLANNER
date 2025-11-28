@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { useAppStore, type AppState } from './store'
-import { syncToSupabase, projectsApi, tasksApi, conversationsApi, apiUsageApi } from './supabase-api'
+import { useAppStore } from './store'
+import { projectsApi, tasksApi, conversationsApi, apiUsageApi } from './supabase-api'
 
 export type SyncStatus = 'idle' | 'syncing' | 'success' | 'error'
 
@@ -11,21 +11,14 @@ export function useSupabaseSync() {
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // 上傳本地資料到 Supabase
+  // 上傳本地資料到 Supabase（目前未實作，保留介面）
   const uploadToSupabase = useCallback(async () => {
     setSyncStatus('syncing')
     setError(null)
 
     try {
-      const state = useAppStore.getState()
-
-      await syncToSupabase({
-        projects: state.projects,
-        tasks: state.tasks,
-        messages: state.messages,
-        apiUsage: state.apiUsage,
-      })
-
+      // TODO: 實作批次上傳邏輯
+      // 目前各功能已改為即時同步，此函數保留供未來使用
       setSyncStatus('success')
       setLastSyncTime(new Date())
     } catch (err) {

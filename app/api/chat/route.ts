@@ -69,15 +69,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 呼叫 OpenAI API (GPT-5)
-    // GPT-5 注意事項：
-    // 1. 使用 max_completion_tokens 而非 max_tokens
-    // 2. 不支援 temperature 參數（只能用預設值 1）
-    // 3. 需要更多 tokens 進行推理
+    // 呼叫 OpenAI API (GPT-4.1)
+    // GPT-4.1 特點：1M context window，適合長對話
     const response = await openai.chat.completions.create({
-      model: 'gpt-5',
+      model: 'gpt-4.1',
       messages: chatMessages as Parameters<typeof openai.chat.completions.create>[0]['messages'],
-      max_completion_tokens: isLongTranscript ? 16000 : 8000,
+      max_tokens: isLongTranscript ? 16000 : 8000,
+      temperature: isLongTranscript ? 0.3 : 0.7,
     })
 
     const aiResponse = response.choices[0].message.content || ''
@@ -92,7 +90,7 @@ export async function POST(request: NextRequest) {
       raw: aiResponse,
       usage: usage
         ? {
-            model: 'gpt-5',
+            model: 'gpt-4.1',
             promptTokens: usage.prompt_tokens,
             completionTokens: usage.completion_tokens,
             totalTokens: usage.total_tokens,

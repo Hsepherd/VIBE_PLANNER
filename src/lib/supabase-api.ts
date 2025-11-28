@@ -49,7 +49,17 @@ export interface DbConversation {
   content: string
   metadata: Record<string, unknown> | null
   user_id?: string
+  session_id?: string
   created_at: string
+}
+
+export interface DbChatSession {
+  id: string
+  user_id: string
+  title: string
+  is_pinned: boolean
+  created_at: string
+  updated_at: string
 }
 
 export interface DbApiUsage {
@@ -223,10 +233,116 @@ export const tasksApi = {
   },
 }
 
+// ============ Chat Sessions API ============
+
+export const chatSessionsApi = {
+  // 取得所有對話 sessions（置頂的在最前面，然後按更新時間排序）
+  async getAll(): Promise<DbChatSession[]> {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('chat_sessions')
+      .select('*')
+      .order('is_pinned', { ascending: false })
+      .order('updated_at', { ascending: false })
+
+    if (error) throw error
+    return data || []
+  },
+
+  // 取得單一 session
+  async getById(id: string): Promise<DbChatSession | null> {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('chat_sessions')
+      .select('*')
+      .eq('id', id)
+      .single()
+
+    if (error) throw error
+    return data
+  },
+
+  // 建立新 session
+  async create(title = '新對話'): Promise<DbChatSession> {
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
+    const { data, error } = await supabase
+      .from('chat_sessions')
+      .insert({ title, user_id: userId })
+      .select()
+      .single()
+
+    if (error) throw error
+    return data
+  },
+
+  // 更新 session 標題
+  async updateTitle(id: string, title: string): Promise<DbChatSession> {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('chat_sessions')
+      .update({ title })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) throw error
+    return data
+  },
+
+  // 切換置頂狀態
+  async togglePin(id: string, isPinned: boolean): Promise<DbChatSession> {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('chat_sessions')
+      .update({ is_pinned: isPinned })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) throw error
+    return data
+  },
+
+  // 刪除 session（會連同刪除該 session 的所有對話）
+  async delete(id: string): Promise<void> {
+    const supabase = getSupabase()
+    const { error } = await supabase
+      .from('chat_sessions')
+      .delete()
+      .eq('id', id)
+    if (error) throw error
+  },
+
+  // 清除所有 sessions
+  async clearAll(): Promise<void> {
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
+    const { error } = await supabase
+      .from('chat_sessions')
+      .delete()
+      .eq('user_id', userId)
+    if (error) throw error
+  },
+}
+
 // ============ 對話 API ============
 
 export const conversationsApi = {
-  // 取得所有對話（最近 N 條）
+  // 取得指定 session 的對話
+  async getBySessionId(sessionId: string): Promise<DbConversation[]> {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: true })
+
+    if (error) throw error
+    return data || []
+  },
+
+  // 取得所有對話（最近 N 條）- 向後相容
   async getRecent(limit = 50): Promise<DbConversation[]> {
     const supabase = getSupabase()
     const { data, error } = await supabase
@@ -253,6 +369,16 @@ export const conversationsApi = {
 
     if (error) throw error
     return data
+  },
+
+  // 清除指定 session 的對話
+  async clearBySessionId(sessionId: string): Promise<void> {
+    const supabase = getSupabase()
+    const { error } = await supabase
+      .from('conversations')
+      .delete()
+      .eq('session_id', sessionId)
+    if (error) throw error
   },
 
   // 清除所有對話（只刪除目前使用者的）

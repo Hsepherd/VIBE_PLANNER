@@ -79,6 +79,8 @@ export function useSupabaseTasks() {
         due_date: task.dueDate ? task.dueDate.toISOString() : null,
         assignee: task.assignee || null,
         project_id: task.projectId || null,
+        tags: null,
+        group_name: null,
       })
       setTasks(prev => [dbTaskToTask(dbTask), ...prev])
       return dbTask

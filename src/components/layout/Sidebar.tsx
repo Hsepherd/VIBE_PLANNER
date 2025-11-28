@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useAppStore, type AppState, type Task } from '@/lib/store'
 import { useAuth } from '@/lib/useAuth'
+import { ChatSessionList } from '@/components/chat/ChatSessionList'
 import {
   MessageSquare,
   LayoutDashboard,
@@ -26,10 +27,9 @@ import {
 
 // 管理員 email（與後端保持一致）
 const ADMIN_EMAIL = 'xk4xk4563022@gmail.com'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
 const navItems = [
-  { href: '/', label: '對話', icon: MessageSquare },
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/tasks', label: '任務', icon: CheckSquare },
   { href: '/calendar', label: '行事曆', icon: Calendar },
@@ -47,14 +47,26 @@ function SidebarContent({ onNavigate, collapsed = false }: { onNavigate?: () => 
     (t: Task) => t.status !== 'completed' && t.priority === 'urgent'
   ).length
 
+  // 清除對話（本地 + 雲端）
+  const handleClearMessages = async () => {
+    clearMessages()
+    onNavigate?.()
+    const { conversationsApi } = await import('@/lib/supabase-api')
+    try {
+      await conversationsApi.clear()
+    } catch (error) {
+      console.error('清除雲端對話失敗:', error)
+    }
+  }
+
   return (
     <>
       {/* Logo */}
       <div className={`p-4 border-b ${collapsed ? 'flex justify-center' : ''}`}>
         <Link href="/" className="flex items-center gap-2" onClick={onNavigate}>
-          <span className="text-2xl">🎯</span>
+          <img src="/pingu.png" alt="Planner" className="w-8 h-8 rounded-md object-cover" />
           <span className={`font-bold text-lg whitespace-nowrap transition-all duration-200 ${collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'}`}>
-            Vibe Planner
+            Planner
           </span>
         </Link>
       </div>
@@ -105,10 +117,7 @@ function SidebarContent({ onNavigate, collapsed = false }: { onNavigate?: () => 
         <Button
           variant="ghost"
           className={`w-full transition-all duration-200 ${collapsed ? 'justify-center px-2' : 'justify-start gap-2'} text-muted-foreground`}
-          onClick={() => {
-            clearMessages()
-            onNavigate?.()
-          }}
+          onClick={handleClearMessages}
           title={collapsed ? '清除對話' : undefined}
         >
           <Trash2 className="h-4 w-4 shrink-0" />
@@ -134,7 +143,6 @@ function SidebarContentWithoutLogo({ collapsed = false }: { collapsed?: boolean 
   const pathname = usePathname()
   const router = useRouter()
   const tasks = useAppStore((state: AppState) => state.tasks)
-  const clearMessages = useAppStore((state: AppState) => state.clearMessages)
   const { user, signOut } = useAuth()
 
   const pendingTasksCount = tasks.filter((t: Task) => t.status === 'pending').length
@@ -153,8 +161,27 @@ function SidebarContentWithoutLogo({ collapsed = false }: { collapsed?: boolean 
 
   return (
     <>
+      {/* 對話列表區塊 */}
+      <div className={`flex-1 flex flex-col min-h-0 ${collapsed ? '' : 'border-b'}`}>
+        {/* 對話歷史標題 */}
+        {!collapsed && (
+          <div className="px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            對話歷史
+          </div>
+        )}
+        {/* 對話列表 */}
+        <div className="flex-1 overflow-y-auto">
+          <ChatSessionList collapsed={collapsed} />
+        </div>
+      </div>
+
       {/* 導航 - Acctual 風格 */}
-      <nav className={`flex-1 ${collapsed ? 'px-2 py-3' : 'px-3 py-3'} space-y-0.5`}>
+      <nav className={`${collapsed ? 'px-2 py-3' : 'px-3 py-3'} space-y-0.5 border-b`}>
+        {!collapsed && (
+          <div className="px-3 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
+            功能
+          </div>
+        )}
         {navItems.map((item) => {
           const isActive = pathname === item.href
           const Icon = item.icon
@@ -198,18 +225,6 @@ function SidebarContentWithoutLogo({ collapsed = false }: { collapsed?: boolean 
 
       {/* 底部操作 - Acctual 風格 */}
       <div className={`${collapsed ? 'px-2 py-3' : 'px-3 py-3'} border-t space-y-0.5`}>
-        <button
-          className={`
-            w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200
-            text-muted-foreground hover:text-foreground hover:bg-muted/50 text-sm
-            ${collapsed ? 'justify-center px-2' : ''}
-          `}
-          onClick={() => clearMessages()}
-          title={collapsed ? '清除對話' : undefined}
-        >
-          <Trash2 className="h-[18px] w-[18px] shrink-0" />
-          {!collapsed && <span>清除對話</span>}
-        </button>
         <Link href="/settings" title={collapsed ? '設定' : undefined}>
           <div
             className={`
@@ -333,16 +348,31 @@ export function MobileSidebar({
   )
 }
 
+// 側邊欄寬度常數
+const MIN_WIDTH = 64 // 收合狀態最小寬度
+const DEFAULT_WIDTH = 224 // 預設寬度 (w-56 = 14rem = 224px)
+const MAX_WIDTH = 400 // 最大寬度
+
 // 桌面版側邊欄
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
+  const [width, setWidth] = useState(DEFAULT_WIDTH)
+  const [isResizing, setIsResizing] = useState(false)
+  const sidebarRef = useRef<HTMLElement>(null)
 
-  // 從 localStorage 讀取收合狀態
+  // 從 localStorage 讀取收合狀態和寬度
   useEffect(() => {
-    const saved = localStorage.getItem('sidebar-collapsed')
-    if (saved === 'true') {
+    const savedCollapsed = localStorage.getItem('sidebar-collapsed')
+    if (savedCollapsed === 'true') {
       setCollapsed(true)
+    }
+    const savedWidth = localStorage.getItem('sidebar-width')
+    if (savedWidth) {
+      const parsedWidth = parseInt(savedWidth, 10)
+      if (!isNaN(parsedWidth) && parsedWidth >= MIN_WIDTH && parsedWidth <= MAX_WIDTH) {
+        setWidth(parsedWidth)
+      }
     }
   }, [])
 
@@ -356,18 +386,68 @@ export default function Sidebar() {
     setTimeout(() => setIsAnimating(false), 300)
   }
 
+  // 開始拖曳
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsResizing(true)
+  }, [])
+
+  // 拖曳中
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return
+
+      const newWidth = e.clientX
+      if (newWidth >= MIN_WIDTH && newWidth <= MAX_WIDTH) {
+        // 如果拖曳到接近最小寬度，自動收合
+        if (newWidth < 100) {
+          setCollapsed(true)
+          localStorage.setItem('sidebar-collapsed', 'true')
+        } else {
+          setCollapsed(false)
+          localStorage.setItem('sidebar-collapsed', 'false')
+          setWidth(newWidth)
+          localStorage.setItem('sidebar-width', String(newWidth))
+        }
+      }
+    }
+
+    const handleMouseUp = () => {
+      setIsResizing(false)
+    }
+
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+      // 防止選取文字
+      document.body.style.userSelect = 'none'
+      document.body.style.cursor = 'col-resize'
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+  }, [isResizing])
+
+  // 計算實際顯示寬度
+  const displayWidth = collapsed ? MIN_WIDTH : width
+
   return (
     <aside
+      ref={sidebarRef}
+      style={{ width: displayWidth }}
       className={`
-        hidden md:flex border-r bg-background flex-col relative
-        transition-[width] duration-300 ease-in-out
-        ${collapsed ? 'w-16' : 'w-56'}
+        group/sidebar hidden md:flex border-r bg-background flex-col relative
+        ${!isResizing ? 'transition-[width] duration-300 ease-in-out' : ''}
       `}
     >
-      {/* 展開/收合按鈕 - 固定在右邊線上置中 */}
+      {/* 展開/收合按鈕 - 平常隱藏，hover 時顯示 */}
       <button
         onClick={toggleCollapsed}
-        className="absolute -right-3 top-1/2 -translate-y-1/2 z-10 w-6 h-6 bg-background border rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shadow-sm"
+        className="absolute -right-3 bottom-20 z-10 w-6 h-6 bg-background border rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-all shadow-sm opacity-0 group-hover/sidebar:opacity-100"
         title={collapsed ? "展開側邊欄" : "收合側邊欄"}
       >
         {collapsed ? (
@@ -377,14 +457,23 @@ export default function Sidebar() {
         )}
       </button>
 
-      {/* 頂部：Logo - Acctual 風格 */}
+      {/* 拖曳調整寬度的把手 */}
+      <div
+        onMouseDown={handleMouseDown}
+        className={`
+          absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20
+          hover:bg-primary/30 transition-colors
+          ${isResizing ? 'bg-primary/50' : ''}
+        `}
+        title="拖曳調整寬度"
+      />
+
+      {/* 頂部：Logo */}
       <div className="p-4 border-b flex items-center">
         <Link href="/" className="flex items-center gap-2">
-          <div className="w-7 h-7 bg-black rounded-md flex items-center justify-center">
-            <span className="text-white font-bold text-sm">Hz</span>
-          </div>
+          <img src="/pingu.png" alt="Planner" className="w-7 h-7 rounded-md object-cover" />
           {!collapsed && (
-            <span className="font-semibold text-base">Planner</span>
+            <span className="font-semibold text-base whitespace-nowrap">Planner</span>
           )}
         </Link>
       </div>

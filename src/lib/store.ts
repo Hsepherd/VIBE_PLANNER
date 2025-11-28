@@ -51,12 +51,12 @@ export interface ApiUsageRecord {
   cost: number // USD
 }
 
-// GPT-5 價格 (per 1M tokens)
+// GPT-4.1 價格 (per 1M tokens)
 // 參考: https://openai.com/api/pricing/
 const PRICING = {
-  'gpt-5': {
-    input: 2.00,   // $2.00 per 1M input tokens (估計)
-    output: 8.00,  // $8.00 per 1M output tokens (估計)
+  'gpt-4.1': {
+    input: 2.00,   // $2.00 per 1M input tokens
+    output: 8.00,  // $8.00 per 1M output tokens
   },
   'gpt-4o': {
     input: 2.50,   // $2.50 per 1M input tokens
@@ -68,7 +68,8 @@ const PRICING = {
 export interface AppState {
   // 訊息
   messages: Message[]
-  addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void
+  addMessage: (message: Omit<Message, 'id' | 'timestamp'> | Message) => void
+  setMessages: (messages: Message[]) => void
   clearMessages: () => void
 
   // 任務
@@ -133,11 +134,13 @@ export const useAppStore = create<AppState>()(
             ...state.messages,
             {
               ...message,
-              id: generateId(),
-              timestamp: new Date(),
+              // 如果已有 id 和 timestamp 就使用，否則生成新的
+              id: 'id' in message && message.id ? message.id : generateId(),
+              timestamp: 'timestamp' in message && message.timestamp ? message.timestamp : new Date(),
             },
           ],
         })),
+      setMessages: (messages) => set({ messages }),
       clearMessages: () => set({ messages: [] }),
 
       // 任務
@@ -211,7 +214,7 @@ export const useAppStore = create<AppState>()(
       apiUsage: [],
       addApiUsage: ({ model, promptTokens, completionTokens }) =>
         set((state) => {
-          const pricing = PRICING[model as keyof typeof PRICING] || PRICING['gpt-5']
+          const pricing = PRICING[model as keyof typeof PRICING] || PRICING['gpt-4.1']
           const cost =
             (promptTokens / 1_000_000) * pricing.input +
             (completionTokens / 1_000_000) * pricing.output

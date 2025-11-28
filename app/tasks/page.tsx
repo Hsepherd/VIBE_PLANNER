@@ -100,21 +100,32 @@ function parseDescription(description: string) {
 
   if (quotesMatch) {
     const quotesText = quotesMatch[1].trim()
-    const quoteLines = quotesText.split('\n').filter(line => {
-      const trimmed = line.trim()
-      return trimmed.startsWith('「') ||
-             trimmed.startsWith('【') ||
-             /^\d{1,2}:\d{2}/.test(trimmed) ||
-             /^[A-Za-z\u4e00-\u9fff]+[:：]/.test(trimmed)
-    })
-    sections.quotes = quoteLines.map(line => {
-      let trimmed = line.trim()
-      const timeMatch = trimmed.match(/^(\d{1,2}:\d{2})\s+(.+)/)
-      if (timeMatch) {
-        trimmed = `【${timeMatch[1]}】${timeMatch[2]}`
+    // 如果原文引用區塊有內容，嘗試解析
+    if (quotesText.length > 0) {
+      const quoteLines = quotesText.split('\n').filter(line => {
+        const trimmed = line.trim()
+        // 放寬過濾條件：只要不是空行或純符號就保留
+        if (!trimmed || trimmed === '「' || trimmed === '」') return false
+        return trimmed.startsWith('「') ||
+               trimmed.startsWith('【') ||
+               /^\d{1,2}:\d{2}/.test(trimmed) ||
+               /^[A-Za-z\u4e00-\u9fff]+[:：]/.test(trimmed) ||
+               trimmed.length > 10 // 保留長度超過 10 字元的內容
+      })
+      sections.quotes = quoteLines.map(line => {
+        let trimmed = line.trim()
+        // 嘗試轉換時間戳格式
+        const timeMatch = trimmed.match(/^(\d{1,2}:\d{2})\s+(.+)/)
+        if (timeMatch) {
+          trimmed = `【${timeMatch[1]}】${timeMatch[2]}`
+        }
+        return trimmed
+      })
+      // 如果過濾後沒有內容，但原文有超過 20 字元，則顯示原文
+      if (sections.quotes.length === 0 && quotesText.length > 20) {
+        sections.quotes = [quotesText]
       }
-      return trimmed
-    })
+    }
   }
 
   if (!sections.summary && !sections.steps.length && !sections.context && !sections.quotes.length) {
@@ -143,7 +154,7 @@ function TaskDetailDialog({
   task: Task | null
   onClose: () => void
   onUpdate: (id: string, updates: Partial<Task>) => Promise<void>
-  onComplete: (id: string) => Promise<void>
+  onComplete: (id: string) => Promise<unknown>
   teamMembers: string[]
   onAddMember: (name: string) => void
   onRemoveMember: (name: string) => void

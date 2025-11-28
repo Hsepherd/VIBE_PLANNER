@@ -1,16 +1,19 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useAppStore, type Message, type ExtractedTask } from '@/lib/store'
-import { Send, Paperclip, X, Loader2, Image as ImageIcon } from 'lucide-react'
+import { useChatSessionContext } from '@/lib/ChatSessionContext'
+import { useConversationSummary } from '@/lib/useConversationSummary'
+import { Send, Paperclip, X, Loader2, Image as ImageIcon, Brain } from 'lucide-react'
 import { parseAIResponse } from '@/lib/utils-client'
 
 export default function InputArea() {
   const [input, setInput] = useState('')
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const isFirstMessageRef = useRef(true)
 
   const {
     addMessage,
@@ -23,6 +26,26 @@ export default function InputArea() {
     setPendingTasks,
     setLastInputContext,
   } = useAppStore()
+
+  const {
+    saveMessage,
+    generateTitleFromFirstMessage,
+    currentSessionId,
+    sessions,
+  } = useChatSessionContext()
+
+  // 使用摘要功能
+  const {
+    isSummarizing,
+    prepareMessagesForAPI,
+    clearCache,
+    getStats,
+  } = useConversationSummary()
+
+  // 當 session 切換時，清除摘要快取
+  useEffect(() => {
+    clearCache()
+  }, [currentSessionId, clearCache])
 
   const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -43,16 +66,32 @@ export default function InputArea() {
   }, [])
 
   const handleSubmit = async () => {
-    if ((!input.trim() && !imagePreview) || isLoading) return
+    if ((!input.trim() && !imagePreview) || isLoading || isSummarizing) return
 
     const userMessage = input.trim() || '請分析這張圖片'
 
-    // 加入使用者訊息
-    addMessage({
+    // 檢查是否為第一則訊息（用於自動產生標題）
+    const isFirstMessage = messages.length === 0
+
+    // 建立使用者訊息物件
+    const userMessageObj: Message = {
+      id: crypto.randomUUID(),
       role: 'user',
       content: userMessage,
+      timestamp: new Date(),
       metadata: imagePreview ? { imageUrl: imagePreview } : undefined,
-    })
+    }
+
+    // 加入使用者訊息到本地（UI 層保留完整歷史）
+    addMessage(userMessageObj)
+
+    // 同步儲存到雲端（必須等待完成，確保 session 已建立）
+    await saveMessage(userMessageObj)
+
+    // 如果是第一則訊息，自動產生標題
+    if (isFirstMessage) {
+      generateTitleFromFirstMessage(userMessage)
+    }
 
     // 記錄輸入上下文（用於 AI 學習）
     setLastInputContext(userMessage)
@@ -64,17 +103,35 @@ export default function InputArea() {
     clearStreamingContent()
 
     try {
-      // 準備歷史訊息
-      const historyMessages = messages.slice(-10).map((msg: Message) => ({
-        role: msg.role,
+      // 準備所有歷史訊息（包含當前訊息）
+      const allMessages = [...messages, userMessageObj].map((msg: Message) => ({
+        role: msg.role as 'user' | 'assistant',
         content: msg.content,
       }))
 
-      // 加入當前訊息
-      historyMessages.push({
-        role: 'user' as const,
-        content: userMessage,
-      })
+      // 智慧截斷 + 摘要處理
+      const { messages: preparedMessages, summary } = await prepareMessagesForAPI(
+        allMessages,
+        currentSessionId || 'default'
+      )
+
+      // 構建要送給 API 的訊息
+      let apiMessages = preparedMessages
+
+      // 如果有摘要，加在最前面作為系統記憶
+      if (summary) {
+        apiMessages = [
+          {
+            role: 'user' as const,
+            content: `【系統記憶 - 之前的對話摘要】\n${summary}\n\n---\n\n以上是之前對話的摘要，請記住這些內容。接下來是最近的對話：`,
+          },
+          {
+            role: 'assistant' as const,
+            content: '好的，我已經記住之前的對話內容了。請繼續。',
+          },
+          ...preparedMessages,
+        ]
+      }
 
       // 呼叫 Streaming API
       const response = await fetch('/api/chat/stream', {
@@ -83,7 +140,7 @@ export default function InputArea() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          messages: historyMessages,
+          messages: apiMessages,
           image: currentImage,
         }),
       })
@@ -120,12 +177,20 @@ export default function InputArea() {
                 const parsed = parseAIResponse(fullContent)
                 const messageContent = parsed.message || fullContent
 
-                // 清除 streaming，加入完整訊息
-                clearStreamingContent()
-                addMessage({
+                // 建立 AI 回覆訊息物件
+                const assistantMessageObj: Message = {
+                  id: crypto.randomUUID(),
                   role: 'assistant',
                   content: messageContent,
-                })
+                  timestamp: new Date(),
+                }
+
+                // 清除 streaming，加入完整訊息
+                clearStreamingContent()
+                addMessage(assistantMessageObj)
+
+                // 同步儲存到雲端
+                saveMessage(assistantMessageObj)
 
                 // 如果有萃取出的任務，設定為待確認
                 if (parsed.type === 'tasks_extracted' && parsed.tasks && parsed.tasks.length > 0) {
@@ -142,10 +207,13 @@ export default function InputArea() {
                 }
               } else if (data.type === 'error') {
                 clearStreamingContent()
-                addMessage({
+                const errorMessageObj: Message = {
+                  id: crypto.randomUUID(),
                   role: 'assistant',
                   content: `❌ 發生錯誤：${data.error}`,
-                })
+                  timestamp: new Date(),
+                }
+                addMessage(errorMessageObj)
               }
             } catch {
               // 忽略解析錯誤
@@ -156,10 +224,13 @@ export default function InputArea() {
     } catch (error) {
       console.error('Error:', error)
       clearStreamingContent()
-      addMessage({
+      const errorMessageObj: Message = {
+        id: crypto.randomUUID(),
         role: 'assistant',
         content: '❌ 連線發生錯誤，請稍後再試。',
-      })
+        timestamp: new Date(),
+      }
+      addMessage(errorMessageObj)
     } finally {
       setIsLoading(false)
     }
@@ -174,8 +245,11 @@ export default function InputArea() {
     // 單獨 Enter 就是換行（預設行為，不需處理）
   }
 
+  // 取得目前對話統計
+  const stats = getStats(messages.map(m => ({ role: m.role, content: m.content })))
+
   return (
-    <div className="border-t bg-background p-3 md:p-4 safe-area-bottom">
+    <div className="border-t bg-background p-3 md:p-4 pb-6 md:pb-5 safe-area-bottom">
       <div className="max-w-3xl mx-auto">
         {/* 圖片預覽 */}
         {imagePreview && (
@@ -210,7 +284,7 @@ export default function InputArea() {
             size="icon"
             className="shrink-0 h-10 w-10 md:h-9 md:w-9"
             onClick={() => fileInputRef.current?.click()}
-            disabled={isLoading}
+            disabled={isLoading || isSummarizing}
             title="上傳圖片"
           >
             {imagePreview ? (
@@ -227,17 +301,19 @@ export default function InputArea() {
             onKeyDown={handleKeyDown}
             placeholder="輸入訊息或貼上會議記錄..."
             className="min-h-[44px] max-h-[150px] md:max-h-[200px] resize-none text-base"
-            disabled={isLoading}
+            disabled={isLoading || isSummarizing}
           />
 
           {/* 送出按鈕 */}
           <Button
             onClick={handleSubmit}
-            disabled={(!input.trim() && !imagePreview) || isLoading}
+            disabled={(!input.trim() && !imagePreview) || isLoading || isSummarizing}
             size="icon"
             className="shrink-0 h-10 w-10 md:h-9 md:w-9"
           >
-            {isLoading ? (
+            {isSummarizing ? (
+              <Brain className="h-5 w-5 md:h-4 md:w-4 animate-pulse" />
+            ) : isLoading ? (
               <Loader2 className="h-5 w-5 md:h-4 md:w-4 animate-spin" />
             ) : (
               <Send className="h-5 w-5 md:h-4 md:w-4" />
@@ -245,9 +321,21 @@ export default function InputArea() {
           </Button>
         </div>
 
-        <p className="hidden md:block text-xs text-muted-foreground mt-2 text-center">
-          Enter 換行，⌘/Ctrl + Enter 送出
-        </p>
+        <div className="flex justify-between items-center mt-2 mb-4">
+          <p className="text-xs text-muted-foreground truncate">
+            <span className="hidden md:inline">Enter 換行，⌘/Ctrl + Enter 送出</span>
+            <span className="md:hidden">⌘/Ctrl + Enter 送出</span>
+          </p>
+          {/* 記憶體使用量指示（超過 70% 時顯示） */}
+          {stats.percentageUsed > 70 && (
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <Brain className="h-3 w-3" />
+              <span className={stats.percentageUsed > 90 ? 'text-orange-500' : ''}>
+                記憶 {stats.percentageUsed}%
+              </span>
+            </p>
+          )}
+        </div>
       </div>
     </div>
   )

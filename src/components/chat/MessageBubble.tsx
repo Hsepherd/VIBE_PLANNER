@@ -1,14 +1,14 @@
 'use client'
 
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { useState } from 'react'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Card } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Message, useAppStore, type AppState, type Task } from '@/lib/store'
+import { Message } from '@/lib/store'
 import { format } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
-import { Check, Clock, User, Bot } from 'lucide-react'
-import { FeedbackButtons } from '@/components/feedback'
+import { User, Copy, Check, ThumbsUp, ThumbsDown } from 'lucide-react'
+import { recordFeedback } from '@/lib/preferences'
 
 interface MessageBubbleProps {
   message: Message
@@ -16,75 +16,63 @@ interface MessageBubbleProps {
 
 export default function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user'
-  const addTask = useAppStore((state: AppState) => state.addTask)
-  const tasks = useAppStore((state: AppState) => state.tasks)
-
-  // 解析訊息內容，看是否有任務
-  const parseTasksFromMessage = () => {
-    try {
-      // 嘗試解析 JSON 格式的任務
-      const jsonMatch = message.content.match(/```json\n?([\s\S]*?)\n?```/)
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[1])
-        if (parsed.type === 'tasks_extracted' && parsed.tasks) {
-          return parsed.tasks
-        }
-      }
-    } catch {
-      // 忽略解析錯誤
-    }
-    return null
-  }
-
-  const extractedTasks = !isUser ? parseTasksFromMessage() : null
+  const [copied, setCopied] = useState(false)
+  const [feedback, setFeedback] = useState<'positive' | 'negative' | null>(null)
 
   // 取得顯示的訊息內容（移除 JSON 部分）
   const getDisplayContent = () => {
-    if (extractedTasks) {
-      try {
-        const jsonMatch = message.content.match(/```json\n?([\s\S]*?)\n?```/)
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[1])
-          return parsed.message || message.content.replace(/```json[\s\S]*?```/g, '').trim()
-        }
-      } catch {
-        // 忽略
-      }
+    return message.content.replace(/```json[\s\S]*?```/g, '').trim()
+  }
+
+  // 複製訊息
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(getDisplayContent())
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy:', err)
     }
-    return message.content
   }
 
-  const handleAddTask = (task: {
-    title: string
-    description?: string
-    due_date?: string
-    assignee?: string
-    priority?: string
-    project?: string
-  }) => {
-    addTask({
-      title: task.title,
-      description: task.description,
-      status: 'pending',
-      priority: (task.priority as 'low' | 'medium' | 'high' | 'urgent') || 'medium',
-      dueDate: task.due_date ? new Date(task.due_date) : undefined,
-      assignee: task.assignee,
-    })
-  }
-
-  const isTaskAlreadyAdded = (taskTitle: string) => {
-    return tasks.some((t: Task) => t.title === taskTitle)
+  // 處理回饋
+  const handleFeedback = async (type: 'positive' | 'negative') => {
+    if (feedback === type) {
+      setFeedback(null)
+      return
+    }
+    setFeedback(type)
+    try {
+      const feedbackType = type === 'positive' ? 'thumbs_up' : 'thumbs_down'
+      await recordFeedback(feedbackType, message.content, { messageId: message.id })
+    } catch (err) {
+      console.error('Failed to record feedback:', err)
+    }
   }
 
   return (
-    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+    <div className={`group flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+      {/* 頭像 */}
       <Avatar className="h-8 w-8 shrink-0">
-        <AvatarFallback className={isUser ? 'bg-primary text-primary-foreground' : 'bg-secondary'}>
-          {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
-        </AvatarFallback>
+        {isUser ? (
+          <AvatarFallback className="bg-primary text-primary-foreground">
+            <User className="h-4 w-4" />
+          </AvatarFallback>
+        ) : (
+          <>
+            <AvatarImage src="/pingu.png" alt="Vibe Planner" />
+            <AvatarFallback className="bg-secondary">VP</AvatarFallback>
+          </>
+        )}
       </Avatar>
 
       <div className={`flex flex-col gap-1 max-w-[80%] ${isUser ? 'items-end' : 'items-start'}`}>
+        {/* 角色名稱 */}
+        <span className="text-xs font-medium text-muted-foreground px-1">
+          {isUser ? '你' : 'Vibe Planner'}
+        </span>
+
+        {/* 訊息卡片 */}
         <Card
           className={`px-4 py-3 ${
             isUser
@@ -93,73 +81,6 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           }`}
         >
           <p className="text-sm whitespace-pre-wrap">{getDisplayContent()}</p>
-
-          {/* 顯示萃取的任務 */}
-          {extractedTasks && extractedTasks.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-border/50 space-y-2">
-              <p className="text-xs font-medium opacity-70">萃取的任務：</p>
-              {extractedTasks.map((task: {
-                title: string
-                description?: string
-                due_date?: string
-                assignee?: string
-                priority?: string
-                project?: string
-              }, index: number) => (
-                <div
-                  key={index}
-                  className="flex items-center justify-between gap-2 p-2 rounded bg-background/50"
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{task.title}</p>
-                    <div className="flex gap-2 mt-1 flex-wrap">
-                      {task.due_date && (
-                        <Badge variant="outline" className="text-xs">
-                          <Clock className="h-3 w-3 mr-1" />
-                          {task.due_date}
-                        </Badge>
-                      )}
-                      {task.assignee && (
-                        <Badge variant="outline" className="text-xs">
-                          @{task.assignee}
-                        </Badge>
-                      )}
-                      {task.priority && (
-                        <Badge
-                          variant={
-                            task.priority === 'urgent'
-                              ? 'destructive'
-                              : task.priority === 'high'
-                              ? 'default'
-                              : 'secondary'
-                          }
-                          className="text-xs"
-                        >
-                          {task.priority}
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant={isTaskAlreadyAdded(task.title) ? 'ghost' : 'secondary'}
-                    onClick={() => handleAddTask(task)}
-                    disabled={isTaskAlreadyAdded(task.title)}
-                    className="shrink-0"
-                  >
-                    {isTaskAlreadyAdded(task.title) ? (
-                      <>
-                        <Check className="h-4 w-4 mr-1" />
-                        已加入
-                      </>
-                    ) : (
-                      '加入'
-                    )}
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
 
           {/* 顯示圖片 */}
           {message.metadata?.imageUrl && (
@@ -173,17 +94,58 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           )}
         </Card>
 
+        {/* 時間和操作按鈕 */}
         <div className="flex items-center gap-2 px-1">
           <span className="text-xs text-muted-foreground">
             {format(new Date(message.timestamp), 'HH:mm', { locale: zhTW })}
           </span>
-          {/* AI 訊息顯示回饋按鈕 */}
-          {!isUser && (
-            <FeedbackButtons
-              messageContent={message.content}
-              context={{ messageId: message.id }}
-            />
-          )}
+
+          {/* 操作按鈕 - hover 時顯示 */}
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            {/* 複製按鈕 */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+              onClick={handleCopy}
+            >
+              {copied ? (
+                <Check className="h-3 w-3 text-green-500" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
+            </Button>
+
+            {/* AI 訊息顯示回饋按鈕 */}
+            {!isUser && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={`h-6 w-6 p-0 ${
+                    feedback === 'positive'
+                      ? 'text-green-500'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                  onClick={() => handleFeedback('positive')}
+                >
+                  <ThumbsUp className="h-3 w-3" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={`h-6 w-6 p-0 ${
+                    feedback === 'negative'
+                      ? 'text-red-500'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                  onClick={() => handleFeedback('negative')}
+                >
+                  <ThumbsDown className="h-3 w-3" />
+                </Button>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>

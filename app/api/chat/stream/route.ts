@@ -65,12 +65,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 使用 GPT-5 Streaming
+    // 使用 GPT-4.1 Streaming（1M context window）
     const stream = await openai.chat.completions.create({
-      model: 'gpt-5',
+      model: 'gpt-4.1',
       messages: chatMessages as Parameters<typeof openai.chat.completions.create>[0]['messages'],
-      max_completion_tokens: isLongTranscript ? 16000 : 8000,
+      max_tokens: isLongTranscript ? 16000 : 8000,
+      temperature: isLongTranscript ? 0.3 : 0.7,
       stream: true,
+      stream_options: { include_usage: true },
     })
 
     // 建立 ReadableStream 回傳
@@ -100,7 +102,7 @@ export async function POST(request: NextRequest) {
             type: 'done',
             fullContent,
             usage: usageData ? {
-              model: 'gpt-5',
+              model: 'gpt-4.1',
               promptTokens: usageData.prompt_tokens,
               completionTokens: usageData.completion_tokens,
               totalTokens: usageData.total_tokens,

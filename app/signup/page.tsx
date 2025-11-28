@@ -79,9 +79,7 @@ export default function SignupPage() {
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 mb-2">
-            <div className="w-10 h-10 bg-black rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-lg">Hz</span>
-            </div>
+            <img src="/pingu.png" alt="Planner" className="w-10 h-10 rounded-lg object-cover" />
             <span className="font-bold text-2xl">Planner</span>
           </div>
           <p className="text-muted-foreground">建立新帳戶</p>

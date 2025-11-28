@@ -4,6 +4,101 @@
 
 ---
 
+## 2025-11-28
+
+### 🎨 側邊欄 UI 優化
+
+**事件**：改善側邊欄使用體驗，包含對話標題顯示、可調整寬度、收合按鈕優化
+
+**新增功能**：
+
+1. **對話標題完整顯示**
+   - 從單行截斷改為雙行顯示（`line-clamp-2`）
+   - 滑鼠懸停顯示完整標題 tooltip
+   - 操作按鈕（置頂、編輯、刪除）移至右上角，hover 時顯示
+
+2. **側邊欄可拖曳調整寬度**
+   - 最小寬度：64px（收合狀態）
+   - 預設寬度：224px
+   - 最大寬度：400px
+   - 拖曳右邊界可調整寬度
+   - 寬度設定儲存到 localStorage
+
+3. **收合按鈕優化**
+   - 移至側邊欄下方（`bottom-20`）
+   - 平常隱藏，滑鼠移到側邊欄時才顯示
+   - 使用 Tailwind group hover（`group/sidebar`）
+
+**修改檔案**：
+- `src/components/chat/ChatSessionList.tsx` - 標題顯示和操作按鈕
+- `src/components/layout/Sidebar.tsx` - 可調整寬度和收合按鈕
+
+**技術細節**：
+| 項目 | 實作方式 |
+|-----|---------|
+| 雙行標題 | Tailwind `line-clamp-2 leading-snug` |
+| 拖曳調整 | React mouse events + localStorage |
+| hover 顯示 | Tailwind `group/sidebar` + `group-hover/sidebar:opacity-100` |
+
+---
+
+### 🧠 AI 長對話記憶系統
+
+**事件**：解決「prompt is too long」錯誤，實作智慧截斷 + 摘要機制
+
+**問題背景**：
+- 長會議逐字稿（1-3小時）導致 token 超過限制
+- AI 會「失憶」忘記之前的對話內容
+
+**解決方案**：
+
+1. **模型升級：GPT-4.1**
+   - 從 GPT-5（128K tokens）升級到 GPT-4.1（1M tokens）
+   - 價格相同，容量提升 8 倍
+   - 修改所有 API 端點使用 `gpt-4.1`
+
+2. **智慧截斷機制**
+   - 字數門檻：50,000 字（約 5 萬字）
+   - 保留最近 4 則完整訊息
+   - 超過門檻時自動觸發摘要
+
+3. **高品質摘要 API**
+   - 摘要長度：1000-1500 字
+   - 保留內容：會議資訊、任務清單、人物角色、決議原因、數字/日期、風險、待追蹤事項
+   - 摘要快取：同 session 不重複摘要
+
+4. **UI 設計**
+   - 對話框完整保留所有歷史訊息
+   - 只有送給 API 的訊息會被摘要處理
+   - 記憶體使用量指示器（超過 70% 時顯示）
+
+**新增檔案**：
+- `app/api/chat/summarize/route.ts` - 摘要 API 端點
+- `src/lib/useConversationSummary.ts` - 摘要管理 Hook
+
+**修改檔案**：
+- `app/api/chat/route.ts` - 模型改為 gpt-4.1
+- `app/api/chat/stream/route.ts` - 模型改為 gpt-4.1
+- `src/lib/openai.ts` - 模型改為 gpt-4.1
+- `src/lib/store.ts` - 定價更新為 gpt-4.1
+- `src/components/chat/InputArea.tsx` - 整合摘要功能 + 記憶體指示器
+
+**技術細節**：
+| 項目 | 數值 |
+|-----|------|
+| 字數門檻 | 50,000 字 |
+| 保留訊息數 | 4 則 |
+| 摘要長度 | 1000-1500 字 |
+| 模型 | gpt-4.1 |
+| Context Window | 1,000,000 tokens |
+
+**測試結果**：
+- ✅ GPT-4.1 回應正常
+- ✅ Streaming API 正常運作
+- ✅ 無 "prompt is too long" 錯誤
+
+---
+
 ## 2025-11-27
 
 ### 👤 使用者管理後台 + 驗證系統
