@@ -87,10 +87,10 @@ export function ChatSessionList({ collapsed = false, onSessionClick }: ChatSessi
   // 收合狀態下只顯示新對話按鈕
   if (collapsed) {
     return (
-      <div className="px-2 py-2">
+      <div className="flex justify-center py-2">
         <button
           onClick={handleNewChat}
-          className="w-full flex items-center justify-center p-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+          className="w-10 h-10 flex items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
           title="新對話"
         >
           <Plus className="h-4 w-4" />

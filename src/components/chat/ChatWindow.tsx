@@ -1,7 +1,8 @@
 'use client'
 
 import { useRef, useEffect, useState } from 'react'
-import { useAppStore, type AppState, type Message, type ExtractedTask } from '@/lib/store'
+import { useAppStore, type AppState, type Message } from '@/lib/store'
+import { useSupabaseTasks } from '@/lib/useSupabaseTasks'
 import MessageBubble from './MessageBubble'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -16,7 +17,6 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Check, X, CheckSquare, Square, Clock, Loader2, Eye } from 'lucide-react'
-import { RejectReasonSelector } from '@/components/feedback'
 import { recordPositiveExample, recordNegativeExample } from '@/lib/preferences'
 
 // 解析 description 內容的函數
@@ -99,9 +99,10 @@ export default function ChatWindow() {
   const isLoading = useAppStore((state: AppState) => state.isLoading)
   const pendingTasks = useAppStore((state: AppState) => state.pendingTasks)
   const clearPendingTasks = useAppStore((state: AppState) => state.clearPendingTasks)
-  const addTask = useAppStore((state: AppState) => state.addTask)
-
   const lastInputContext = useAppStore((state: AppState) => state.lastInputContext)
+
+  // 使用 Supabase 任務 API（同步到雲端）
+  const { addTask: addTaskToSupabase } = useSupabaseTasks()
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -110,6 +111,8 @@ export default function ChatWindow() {
   const [selectedTasks, setSelectedTasks] = useState<Set<number>>(new Set())
   // 當前查看詳情的任務索引
   const [viewingTaskIndex, setViewingTaskIndex] = useState<number | null>(null)
+  // 防止重複點擊
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   // 當有新的待確認任務時，預設不選（讓用戶自己決定）
   useEffect(() => {
@@ -155,17 +158,25 @@ export default function ChatWindow() {
   }
 
   // 從詳情中加入單一任務
-  const addSingleTask = (index: number) => {
+  const addSingleTask = async (index: number) => {
+    if (isSubmitting) return // 防止重複點擊
+    setIsSubmitting(true)
+
     const task = pendingTasks[index]
-    addTask({
-      title: task.title,
-      description: task.description || '',
-      status: 'pending',
-      priority: task.priority || 'medium',
-      dueDate: task.due_date ? new Date(task.due_date) : undefined,
-      assignee: task.assignee || undefined,
-      project: task.project || undefined,
-    })
+    try {
+      await addTaskToSupabase({
+        title: task.title,
+        description: task.description || '',
+        status: 'pending',
+        priority: task.priority || 'medium',
+        dueDate: task.due_date ? new Date(task.due_date) : undefined,
+        assignee: task.assignee || undefined,
+      })
+    } catch (err) {
+      console.error('新增任務到 Supabase 失敗:', err)
+    } finally {
+      setIsSubmitting(false)
+    }
     recordPositiveExample(
       task as unknown as Record<string, unknown>,
       undefined,
@@ -201,28 +212,38 @@ export default function ChatWindow() {
 
   // 確認加入選中的任務
   const handleConfirmTasks = async () => {
-    for (let index = 0; index < pendingTasks.length; index++) {
-      const task = pendingTasks[index]
-      if (selectedTasks.has(index)) {
-        addTask({
-          title: task.title,
-          description: task.description || '',
-          status: 'pending',
-          priority: task.priority || 'medium',
-          dueDate: task.due_date ? new Date(task.due_date) : undefined,
-          assignee: task.assignee || undefined,
-          project: task.project || undefined,
-        })
-        recordPositiveExample(
-          task as unknown as Record<string, unknown>,
-          undefined,
-          lastInputContext.slice(0, 500)
-        ).catch(console.error)
+    if (isSubmitting) return // 防止重複點擊
+    setIsSubmitting(true)
+
+    try {
+      for (let index = 0; index < pendingTasks.length; index++) {
+        const task = pendingTasks[index]
+        if (selectedTasks.has(index)) {
+          try {
+            await addTaskToSupabase({
+              title: task.title,
+              description: task.description || '',
+              status: 'pending',
+              priority: task.priority || 'medium',
+              dueDate: task.due_date ? new Date(task.due_date) : undefined,
+              assignee: task.assignee || undefined,
+            })
+          } catch (err) {
+            console.error('新增任務到 Supabase 失敗:', err)
+          }
+          recordPositiveExample(
+            task as unknown as Record<string, unknown>,
+            undefined,
+            lastInputContext.slice(0, 500)
+          ).catch(console.error)
+        }
       }
+      clearPendingTasks()
+      setSelectedTasks(new Set())
+      setViewingTaskIndex(null)
+    } finally {
+      setIsSubmitting(false)
     }
-    clearPendingTasks()
-    setSelectedTasks(new Set())
-    setViewingTaskIndex(null)
   }
 
   // 取消全部
@@ -413,11 +434,15 @@ export default function ChatWindow() {
               </Button>
               <Button
                 onClick={handleConfirmTasks}
-                disabled={selectedTasks.size === 0}
+                disabled={selectedTasks.size === 0 || isSubmitting}
                 size="sm"
               >
-                <Check className="h-4 w-4 mr-1" />
-                加入 {selectedTasks.size} 個任務
+                {isSubmitting ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Check className="h-4 w-4 mr-1" />
+                )}
+                {isSubmitting ? '新增中...' : `加入 ${selectedTasks.size} 個任務`}
               </Button>
             </div>
           </Card>
@@ -536,6 +561,7 @@ export default function ChatWindow() {
                 variant="outline"
                 onClick={() => viewingTaskIndex !== null && skipSingleTask(viewingTaskIndex)}
                 className="flex-1"
+                disabled={isSubmitting}
               >
                 <X className="h-4 w-4 mr-1" />
                 跳過
@@ -543,9 +569,14 @@ export default function ChatWindow() {
               <Button
                 onClick={() => viewingTaskIndex !== null && addSingleTask(viewingTaskIndex)}
                 className="flex-1"
+                disabled={isSubmitting}
               >
-                <Check className="h-4 w-4 mr-1" />
-                加入任務
+                {isSubmitting ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Check className="h-4 w-4 mr-1" />
+                )}
+                {isSubmitting ? '新增中...' : '加入任務'}
               </Button>
             </DialogFooter>
           </DialogContent>

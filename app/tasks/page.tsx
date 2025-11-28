@@ -848,24 +848,60 @@ export default function TasksPage() {
     return Array.from(groupSet)
   }, [tasks])
 
-  // 按截止日期分組
+  // 按截止日期分組（按實際日期分類）
   const today = startOfDay(new Date())
-  const groupedByDueDate = useMemo(() => ({
-    overdue: filteredTasks.filter((t: Task) => {
-      if (!t.dueDate) return false
-      const due = startOfDay(new Date(t.dueDate))
-      return isPast(due) && !isToday(due)
-    }),
-    today: filteredTasks.filter((t: Task) => t.dueDate && isToday(new Date(t.dueDate))),
-    tomorrow: filteredTasks.filter((t: Task) => t.dueDate && isTomorrow(new Date(t.dueDate))),
-    thisWeek: filteredTasks.filter((t: Task) => {
-      if (!t.dueDate) return false
-      const due = new Date(t.dueDate)
-      return !isToday(due) && !isTomorrow(due) && isThisWeek(due, { weekStartsOn: 1 }) && !isPast(startOfDay(due))
-    }),
-    later: filteredTasks.filter((t: Task) => t.dueDate && new Date(t.dueDate) > addDays(today, 7)),
-    noDueDate: filteredTasks.filter((t: Task) => !t.dueDate),
-  }), [filteredTasks, today])
+  const groupedByDueDate = useMemo(() => {
+    const groups: Record<string, Task[]> = {}
+
+    filteredTasks.forEach((task: Task) => {
+      let key: string
+
+      if (!task.dueDate) {
+        key = 'noDueDate'
+      } else {
+        const due = startOfDay(new Date(task.dueDate))
+
+        if (isPast(due) && !isToday(due)) {
+          key = 'overdue'
+        } else if (isToday(due)) {
+          key = 'today'
+        } else if (isTomorrow(due)) {
+          key = 'tomorrow'
+        } else {
+          // 使用實際日期作為 key，格式：date_2025-12-01
+          key = `date_${format(due, 'yyyy-MM-dd')}`
+        }
+      }
+
+      if (!groups[key]) groups[key] = []
+      groups[key].push(task)
+    })
+
+    return groups
+  }, [filteredTasks])
+
+  // 產生截止日期分組的標籤
+  const dueDateLabels = useMemo(() => {
+    const labels: Record<string, { emoji?: string; label: string; className?: string }> = {
+      overdue: { emoji: '⚠️', label: '已過期', className: 'text-destructive' },
+      today: { emoji: '📅', label: '今天', className: 'text-orange-600 dark:text-orange-400' },
+      tomorrow: { emoji: '📆', label: '明天', className: 'text-yellow-600 dark:text-yellow-400' },
+      noDueDate: { emoji: '📝', label: '無截止日', className: 'text-muted-foreground' },
+    }
+
+    // 動態產生日期標籤
+    Object.keys(groupedByDueDate).forEach(key => {
+      if (key.startsWith('date_')) {
+        const dateStr = key.replace('date_', '')
+        const date = new Date(dateStr)
+        const dayName = format(date, 'EEEE', { locale: zhTW })
+        const dateLabel = format(date, 'M/d (EEEE)', { locale: zhTW })
+        labels[key] = { emoji: '🗓️', label: dateLabel }
+      }
+    })
+
+    return labels
+  }, [groupedByDueDate])
 
   // 按優先級分組
   const groupedByPriority = useMemo(() => ({
@@ -933,18 +969,23 @@ export default function TasksPage() {
     await updateTask(id, updates)
   }, [updateTask])
 
-  // 任務項目組件 - Acctual 風格
+  // 任務項目組件 - 卡片式設計，支援直接編輯
   const TaskItem = ({ task }: { task: Task }) => {
     const hasDescription = task.description && task.description.trim().length > 0
+    const [datePickerOpen, setDatePickerOpen] = useState(false)
+    const [assigneeOpen, setAssigneeOpen] = useState(false)
+    const [groupOpen, setGroupOpen] = useState(false)
+    const [tagOpen, setTagOpen] = useState(false)
+    const [priorityOpen, setPriorityOpen] = useState(false)
 
     return (
       <div
-        className={`bg-white rounded-lg border transition-all cursor-pointer hover:shadow-sm ${
+        className={`bg-white rounded-lg border transition-all hover:shadow-sm ${
           task.status === 'completed' ? 'opacity-60' : ''
         }`}
-        onClick={() => setSelectedTask(task)}
       >
-        <div className="flex items-center gap-3 px-4 py-3">
+        {/* 第一行：checkbox + 標題 + 詳情按鈕 + 刪除 */}
+        <div className="flex items-center gap-3 px-4 pt-3 pb-2">
           {/* Checkbox */}
           <button
             className={`h-5 w-5 shrink-0 flex items-center justify-center rounded-full border-2 transition-colors ${
@@ -966,56 +1007,21 @@ export default function TasksPage() {
             )}
           </button>
 
-          {/* 任務內容 */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className={`text-sm font-medium ${task.status === 'completed' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
-                {task.title}
-              </span>
-              {hasDescription && <FileText className="h-3.5 w-3.5 text-muted-foreground" />}
-            </div>
-            <div className="flex items-center gap-3 mt-1">
-              {task.dueDate && (
-                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Calendar className="h-3 w-3" />
-                  {format(new Date(task.dueDate), 'M/d', { locale: zhTW })}
-                </span>
-              )}
-              {task.assignee && (
-                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <User className="h-3 w-3" />
-                  {task.assignee}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* 標籤區域 */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            {task.groupName && (
-              <span className={`text-xs px-2 py-0.5 rounded-full ${getGroupColor(task.groupName).bg} ${getGroupColor(task.groupName).text}`}>
-                {task.groupName}
-              </span>
+          {/* 標題 */}
+          <div className="flex-1 min-w-0 flex items-center gap-2">
+            <span className={`text-sm font-medium truncate ${task.status === 'completed' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
+              {task.title}
+            </span>
+            {hasDescription && (
+              <button
+                onClick={() => setSelectedTask(task)}
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+                title="查看詳情"
+              >
+                <FileText className="h-3.5 w-3.5" />
+              </button>
             )}
-            {(task.tags || []).slice(0, 1).map((tagName) => {
-              const colors = getTagColor(tagName)
-              return (
-                <span
-                  key={tagName}
-                  className={`text-xs px-2 py-0.5 rounded-full ${colors.bg} ${colors.text}`}
-                >
-                  {tagName}
-                </span>
-              )
-            })}
           </div>
-
-          {/* 優先級 */}
-          <div className={`w-3 h-3 rounded-full shrink-0 ${
-            task.priority === 'urgent' ? 'bg-red-500' :
-            task.priority === 'high' ? 'bg-orange-400' :
-            task.priority === 'medium' ? 'bg-yellow-400' : 'bg-green-400'
-          }`} title={priorityConfig[task.priority].label} />
 
           {/* 刪除按鈕 */}
           <button
@@ -1028,14 +1034,237 @@ export default function TasksPage() {
             <Trash2 className="h-4 w-4" />
           </button>
         </div>
+
+        {/* 第二行：可編輯的欄位 */}
+        <div className="flex items-center gap-2 px-4 pb-3 flex-wrap">
+          {/* 日期選擇器 */}
+          <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+            <PopoverTrigger asChild>
+              <button
+                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border transition-colors hover:bg-gray-50 ${
+                  task.dueDate ? 'border-gray-200 text-foreground' : 'border-dashed border-gray-300 text-muted-foreground'
+                }`}
+              >
+                <Calendar className="h-3 w-3" />
+                {task.dueDate ? format(new Date(task.dueDate), 'M/d', { locale: zhTW }) : '日期'}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <CalendarComponent
+                mode="single"
+                selected={task.dueDate ? new Date(task.dueDate) : undefined}
+                onSelect={async (date) => {
+                  await updateTask(task.id, { dueDate: date ? date.toISOString() : undefined })
+                  setDatePickerOpen(false)
+                }}
+                locale={zhTW}
+              />
+              {task.dueDate && (
+                <div className="p-2 border-t">
+                  <button
+                    className="w-full text-xs text-muted-foreground hover:text-red-500"
+                    onClick={async () => {
+                      await updateTask(task.id, { dueDate: undefined })
+                      setDatePickerOpen(false)
+                    }}
+                  >
+                    清除日期
+                  </button>
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+
+          {/* 負責人選擇器 */}
+          <DropdownMenu open={assigneeOpen} onOpenChange={setAssigneeOpen}>
+            <DropdownMenuTrigger asChild>
+              <button
+                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border transition-colors hover:bg-gray-50 ${
+                  task.assignee ? 'border-gray-200 text-foreground' : 'border-dashed border-gray-300 text-muted-foreground'
+                }`}
+              >
+                <User className="h-3 w-3" />
+                {task.assignee || '負責人'}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {teamMembers.map((member) => (
+                <DropdownMenuItem
+                  key={member}
+                  onClick={async () => {
+                    await updateTask(task.id, { assignee: member })
+                  }}
+                >
+                  <User className="h-3 w-3 mr-2" />
+                  {member}
+                  {task.assignee === member && <Check className="h-3 w-3 ml-auto" />}
+                </DropdownMenuItem>
+              ))}
+              {task.assignee && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-muted-foreground"
+                    onClick={async () => {
+                      await updateTask(task.id, { assignee: undefined })
+                    }}
+                  >
+                    <X className="h-3 w-3 mr-2" />
+                    清除負責人
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* 組別選擇器 */}
+          <DropdownMenu open={groupOpen} onOpenChange={setGroupOpen}>
+            <DropdownMenuTrigger asChild>
+              <button
+                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors hover:opacity-80 ${
+                  task.groupName
+                    ? `${getGroupColor(task.groupName).bg} ${getGroupColor(task.groupName).text}`
+                    : 'border border-dashed border-gray-300 text-muted-foreground hover:bg-gray-50'
+                }`}
+              >
+                <FolderOpen className="h-3 w-3" />
+                {task.groupName || '組別'}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {availableGroups.map((group) => (
+                <DropdownMenuItem
+                  key={group.name}
+                  onClick={async () => {
+                    await updateTask(task.id, { groupName: group.name })
+                  }}
+                >
+                  <span className={`w-2 h-2 rounded-full mr-2 ${getGroupColor(group.name).bg}`} />
+                  {group.name}
+                  {task.groupName === group.name && <Check className="h-3 w-3 ml-auto" />}
+                </DropdownMenuItem>
+              ))}
+              {task.groupName && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-muted-foreground"
+                    onClick={async () => {
+                      await updateTask(task.id, { groupName: undefined })
+                    }}
+                  >
+                    <X className="h-3 w-3 mr-2" />
+                    清除組別
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* 標籤選擇器 */}
+          <DropdownMenu open={tagOpen} onOpenChange={setTagOpen}>
+            <DropdownMenuTrigger asChild>
+              <button
+                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors hover:opacity-80 ${
+                  task.tags && task.tags.length > 0
+                    ? `${getTagColor(task.tags[0]).bg} ${getTagColor(task.tags[0]).text}`
+                    : 'border border-dashed border-gray-300 text-muted-foreground hover:bg-gray-50'
+                }`}
+              >
+                <TagIcon className="h-3 w-3" />
+                {task.tags && task.tags.length > 0 ? task.tags.join(', ') : '標籤'}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {availableTags.map((tag) => {
+                const isSelected = (task.tags || []).includes(tag.name)
+                return (
+                  <DropdownMenuItem
+                    key={tag.name}
+                    onClick={async () => {
+                      const currentTags = task.tags || []
+                      const newTags = isSelected
+                        ? currentTags.filter(t => t !== tag.name)
+                        : [...currentTags, tag.name]
+                      await updateTask(task.id, { tags: newTags })
+                    }}
+                  >
+                    <span className={`w-2 h-2 rounded-full mr-2 ${getTagColor(tag.name).bg}`} />
+                    {tag.name}
+                    {isSelected && <Check className="h-3 w-3 ml-auto" />}
+                  </DropdownMenuItem>
+                )
+              })}
+              {task.tags && task.tags.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-muted-foreground"
+                    onClick={async () => {
+                      await updateTask(task.id, { tags: [] })
+                    }}
+                  >
+                    <X className="h-3 w-3 mr-2" />
+                    清除所有標籤
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* 優先級選擇器 */}
+          <DropdownMenu open={priorityOpen} onOpenChange={setPriorityOpen}>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-200 transition-colors hover:bg-gray-50"
+              >
+                <div className={`w-2.5 h-2.5 rounded-full ${
+                  task.priority === 'urgent' ? 'bg-red-500' :
+                  task.priority === 'high' ? 'bg-orange-400' :
+                  task.priority === 'medium' ? 'bg-yellow-400' : 'bg-green-400'
+                }`} />
+                {priorityConfig[task.priority].label}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {(Object.keys(priorityConfig) as Array<keyof typeof priorityConfig>).map((key) => (
+                <DropdownMenuItem
+                  key={key}
+                  onClick={async () => {
+                    await updateTask(task.id, { priority: key })
+                  }}
+                >
+                  <span className="mr-2">{priorityConfig[key].emoji}</span>
+                  {priorityConfig[key].label}
+                  {task.priority === key && <Check className="h-3 w-3 ml-auto" />}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
     )
   }
 
   // 渲染分組任務
   const renderGroupedTasks = (groups: Record<string, Task[]>, labels: Record<string, { emoji?: string; label: string; className?: string }>) => {
-    return Object.entries(groups).map(([key, groupTasks]) => {
-      if (groupTasks.length === 0) return null
+    // 排序 keys：overdue > today > tomorrow > date_xxx（按日期） > noDueDate
+    const sortedKeys = Object.keys(groups).sort((a, b) => {
+      const order: Record<string, number> = { overdue: 0, today: 1, tomorrow: 2, noDueDate: 999 }
+      const aOrder = order[a] ?? (a.startsWith('date_') ? 3 : 998)
+      const bOrder = order[b] ?? (b.startsWith('date_') ? 3 : 998)
+
+      if (aOrder !== bOrder) return aOrder - bOrder
+      // 如果都是 date_xxx，按日期排序
+      if (a.startsWith('date_') && b.startsWith('date_')) {
+        return a.localeCompare(b)
+      }
+      return 0
+    })
+
+    return sortedKeys.map(key => {
+      const groupTasks = groups[key]
+      if (!groupTasks || groupTasks.length === 0) return null
       const config = labels[key] || { label: key }
       return (
         <div key={key} className="space-y-2">
@@ -1284,14 +1513,7 @@ export default function TasksPage() {
 
         {/* 任務列表 */}
         <div className="space-y-6">
-          {sortMode === 'dueDate' && renderGroupedTasks(groupedByDueDate, {
-            overdue: { emoji: '⚠️', label: '已過期', className: 'text-destructive' },
-            today: { emoji: '📅', label: '今天', className: 'text-orange-600 dark:text-orange-400' },
-            tomorrow: { emoji: '📆', label: '明天', className: 'text-yellow-600 dark:text-yellow-400' },
-            thisWeek: { emoji: '🗓️', label: '本週' },
-            later: { emoji: '📋', label: '稍後', className: 'text-muted-foreground' },
-            noDueDate: { emoji: '📝', label: '無截止日', className: 'text-muted-foreground' },
-          })}
+          {sortMode === 'dueDate' && renderGroupedTasks(groupedByDueDate, dueDateLabels)}
 
           {sortMode === 'priority' && renderGroupedTasks(groupedByPriority, {
             urgent: { emoji: '🔴', label: '緊急', className: 'text-destructive' },

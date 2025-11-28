@@ -5,12 +5,11 @@ import { createClient } from './supabase-client'
 // 取得 Supabase client
 const getSupabase = () => createClient()
 
-// 取得目前使用者 ID
-const getCurrentUserId = async (): Promise<string> => {
+// 取得目前使用者 ID（允許匿名使用者）
+const getCurrentUserId = async (): Promise<string | null> => {
   const supabase = getSupabase()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('未登入')
-  return user.id
+  return user?.id || null
 }
 
 // ============ 類型定義 ============
@@ -184,13 +183,19 @@ export const tasksApi = {
   ): Promise<DbTask> {
     const supabase = getSupabase()
     const userId = await getCurrentUserId()
+    // 如果有 userId 則帶入，否則不帶（讓資料庫用預設值）
+    const insertData = userId ? { ...task, user_id: userId } : task
     const { data, error } = await supabase
       .from('tasks')
-      .insert({ ...task, user_id: userId })
+      .insert(insertData)
       .select()
       .single()
 
-    if (error) throw error
+    if (error) {
+      console.error('[tasksApi.create] 錯誤:', error)
+      throw error
+    }
+    console.log('[tasksApi.create] 成功建立任務:', data)
     return data
   },
 

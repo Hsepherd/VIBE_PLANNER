@@ -138,7 +138,7 @@ function SidebarContent({ onNavigate, collapsed = false }: { onNavigate?: () => 
   )
 }
 
-// 桌面版側邊欄內容（不含 Logo，Logo 由父層處理）- Acctual 風格
+// 桌面版側邊欄內容（不含 Logo，Logo 由父層處理）- Acctual 風格 with fade effect
 function SidebarContentWithoutLogo({ collapsed = false }: { collapsed?: boolean }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -159,16 +159,17 @@ function SidebarContentWithoutLogo({ collapsed = false }: { collapsed?: boolean 
   const displayName = user?.user_metadata?.name || user?.email?.split('@')[0] || '使用者'
   const userEmail = user?.email || ''
 
+  // 文字淡入淡出的 class
+  const textFadeClass = `transition-opacity duration-300 ${collapsed ? 'opacity-0' : 'opacity-100'}`
+
   return (
     <>
       {/* 對話列表區塊 */}
-      <div className={`flex-1 flex flex-col min-h-0 ${collapsed ? '' : 'border-b'}`}>
-        {/* 對話歷史標題 */}
-        {!collapsed && (
-          <div className="px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            對話歷史
-          </div>
-        )}
+      <div className={`flex-1 flex flex-col min-h-0 transition-all duration-300 ${collapsed ? '' : 'border-b'}`}>
+        {/* 對話歷史標題 - 收合時隱藏 */}
+        <div className={`px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider transition-all duration-300 ${collapsed ? 'h-0 py-0 opacity-0 overflow-hidden' : 'opacity-100'}`}>
+          對話歷史
+        </div>
         {/* 對話列表 */}
         <div className="flex-1 overflow-y-auto">
           <ChatSessionList collapsed={collapsed} />
@@ -176,9 +177,10 @@ function SidebarContentWithoutLogo({ collapsed = false }: { collapsed?: boolean 
       </div>
 
       {/* 導航 - Acctual 風格 */}
-      <nav className={`${collapsed ? 'px-2 py-3' : 'px-3 py-3'} space-y-0.5 border-b`}>
+      <nav className={`space-y-0.5 border-b transition-all duration-300 py-2 ${collapsed ? 'px-2' : 'px-3'}`}>
+        {/* 功能標題 - 收合時隱藏 */}
         {!collapsed && (
-          <div className="px-3 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
+          <div className="px-2 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
             功能
           </div>
         )}
@@ -190,22 +192,24 @@ function SidebarContentWithoutLogo({ collapsed = false }: { collapsed?: boolean 
             <Link key={item.href} href={item.href} title={collapsed ? item.label : undefined}>
               <div
                 className={`
-                  flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 cursor-pointer
+                  flex items-center py-2 rounded-lg transition-all duration-300 cursor-pointer
                   ${isActive
                     ? 'bg-muted font-medium text-foreground'
                     : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
                   }
-                  ${collapsed ? 'justify-center px-2' : ''}
+                  ${collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'gap-3 px-2'}
                 `}
               >
                 <Icon className="h-[18px] w-[18px] shrink-0" />
                 {!collapsed && (
-                  <span className="text-sm">{item.label}</span>
-                )}
-                {!collapsed && item.href === '/tasks' && pendingTasksCount > 0 && (
-                  <span className="ml-auto text-xs bg-muted-foreground/20 text-muted-foreground px-1.5 py-0.5 rounded-md">
-                    {pendingTasksCount}
-                  </span>
+                  <>
+                    <span className="text-sm whitespace-nowrap">{item.label}</span>
+                    {item.href === '/tasks' && pendingTasksCount > 0 && (
+                      <span className="ml-auto text-xs bg-muted-foreground/20 text-muted-foreground px-1.5 py-0.5 rounded-md">
+                        {pendingTasksCount}
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
             </Link>
@@ -213,8 +217,8 @@ function SidebarContentWithoutLogo({ collapsed = false }: { collapsed?: boolean 
         })}
       </nav>
 
-      {/* 統計 - 簡化 */}
-      <div className={`space-y-1 transition-all duration-200 overflow-hidden ${collapsed ? 'p-0 h-0 opacity-0' : 'px-3 py-2 opacity-100'}`}>
+      {/* 統計 - 簡化，收合時隱藏 */}
+      <div className={`space-y-1 transition-all duration-300 overflow-hidden ${collapsed ? 'h-0 opacity-0' : 'px-3 py-2 opacity-100'}`}>
         {urgentTasksCount > 0 && (
           <div className="flex items-center gap-2 text-xs text-red-500 px-3">
             <span>🔴</span>
@@ -224,17 +228,17 @@ function SidebarContentWithoutLogo({ collapsed = false }: { collapsed?: boolean 
       </div>
 
       {/* 底部操作 - Acctual 風格 */}
-      <div className={`${collapsed ? 'px-2 py-3' : 'px-3 py-3'} border-t space-y-0.5`}>
+      <div className={`border-t space-y-0.5 transition-all duration-300 py-2 ${collapsed ? 'px-2' : 'px-3'}`}>
         <Link href="/settings" title={collapsed ? '設定' : undefined}>
           <div
             className={`
-              w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200
+              flex items-center py-2 rounded-lg transition-all duration-300
               text-muted-foreground hover:text-foreground hover:bg-muted/50 text-sm
-              ${collapsed ? 'justify-center px-2' : ''}
+              ${collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'gap-3 px-2'}
             `}
           >
             <Settings className="h-[18px] w-[18px] shrink-0" />
-            {!collapsed && <span>設定</span>}
+            {!collapsed && <span className="whitespace-nowrap">設定</span>}
           </div>
         </Link>
         {/* 管理員專屬：使用者管理 */}
@@ -242,26 +246,26 @@ function SidebarContentWithoutLogo({ collapsed = false }: { collapsed?: boolean 
           <Link href="/admin/users" title={collapsed ? '使用者管理' : undefined}>
             <div
               className={`
-                w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200
+                flex items-center py-2 rounded-lg transition-all duration-300
                 text-amber-600 hover:text-amber-700 hover:bg-amber-50 text-sm
-                ${collapsed ? 'justify-center px-2' : ''}
+                ${collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'gap-3 px-2'}
                 ${pathname === '/admin/users' ? 'bg-amber-50' : ''}
               `}
             >
               <Shield className="h-[18px] w-[18px] shrink-0" />
-              {!collapsed && <span>使用者管理</span>}
+              {!collapsed && <span className="whitespace-nowrap">使用者管理</span>}
             </div>
           </Link>
         )}
       </div>
 
       {/* 使用者資訊和登出 */}
-      <div className={`${collapsed ? 'px-2 py-3' : 'px-3 py-3'} border-t`}>
-        {/* 使用者資訊 */}
+      <div className={`border-t transition-all duration-300 py-2 ${collapsed ? 'px-2' : 'px-3'}`}>
+        {/* 使用者資訊 - 收合時隱藏 */}
         {!collapsed && user && (
-          <div className="px-3 py-2 mb-1">
+          <div className="px-2 py-2 mb-1">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
+              <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center shrink-0">
                 <User className="h-4 w-4 text-gray-600" />
               </div>
               <div className="flex-1 min-w-0">
@@ -274,15 +278,15 @@ function SidebarContentWithoutLogo({ collapsed = false }: { collapsed?: boolean 
         {/* 登出按鈕 */}
         <button
           className={`
-            w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200
+            flex items-center py-2 rounded-lg transition-all duration-300
             text-muted-foreground hover:text-red-600 hover:bg-red-50 text-sm
-            ${collapsed ? 'justify-center px-2' : ''}
+            ${collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'w-full gap-3 px-2'}
           `}
           onClick={handleSignOut}
           title={collapsed ? '登出' : undefined}
         >
           <LogOut className="h-[18px] w-[18px] shrink-0" />
-          {!collapsed && <span>登出</span>}
+          {!collapsed && <span className="whitespace-nowrap">登出</span>}
         </button>
       </div>
     </>
@@ -444,38 +448,61 @@ export default function Sidebar() {
         ${!isResizing ? 'transition-[width] duration-300 ease-in-out' : ''}
       `}
     >
-      {/* 展開/收合按鈕 - 平常隱藏，hover 時顯示 */}
-      <button
-        onClick={toggleCollapsed}
-        className="absolute -right-3 bottom-20 z-10 w-6 h-6 bg-background border rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-all shadow-sm opacity-0 group-hover/sidebar:opacity-100"
-        title={collapsed ? "展開側邊欄" : "收合側邊欄"}
-      >
-        {collapsed ? (
-          <ChevronRight className="h-3 w-3" />
-        ) : (
-          <ChevronLeft className="h-3 w-3" />
-        )}
-      </button>
-
       {/* 拖曳調整寬度的把手 */}
-      <div
-        onMouseDown={handleMouseDown}
-        className={`
-          absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20
-          hover:bg-primary/30 transition-colors
-          ${isResizing ? 'bg-primary/50' : ''}
-        `}
-        title="拖曳調整寬度"
-      />
+      {!collapsed && (
+        <div
+          onMouseDown={handleMouseDown}
+          className={`
+            absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20
+            hover:bg-primary/30 transition-colors
+            ${isResizing ? 'bg-primary/50' : ''}
+          `}
+          title="拖曳調整寬度"
+        />
+      )}
 
-      {/* 頂部：Logo */}
-      <div className="p-4 border-b flex items-center">
-        <Link href="/" className="flex items-center gap-2">
-          <img src="/pingu.png" alt="Planner" className="w-7 h-7 rounded-md object-cover" />
-          {!collapsed && (
-            <span className="font-semibold text-base whitespace-nowrap">Planner</span>
-          )}
+      {/* 頂部：Logo 區域 - Manus 風格 with fade effect */}
+      <div className={`h-14 border-b flex items-center group/logo relative transition-all duration-300 ${collapsed ? 'justify-center px-0' : 'px-3'}`}>
+        {/* Logo 按鈕區域 - 收合時可點擊展開 */}
+        <button
+          onClick={collapsed ? toggleCollapsed : undefined}
+          className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-md transition-all duration-300 relative ${collapsed ? 'cursor-pointer' : 'cursor-default'}`}
+          title={collapsed ? "展開側邊欄" : undefined}
+        >
+          {/* Logo 圖片 - 收合時 hover 會淡出 */}
+          <img
+            src="/pingu.png"
+            alt="Planner"
+            className={`w-8 h-8 rounded-md transition-opacity duration-200 ${collapsed ? 'group-hover/logo:opacity-0' : ''}`}
+            style={{ objectFit: 'contain' }}
+          />
+          {/* 展開箭頭 - 收合時 hover 會淡入 */}
+          <ChevronRight
+            className={`h-5 w-5 text-muted-foreground hover:text-foreground absolute transition-opacity duration-200 ${collapsed ? 'opacity-0 group-hover/logo:opacity-100' : 'opacity-0 pointer-events-none'}`}
+          />
+        </button>
+
+        {/* 文字 "Planner" - 展開時淡入，收合時淡出 */}
+        <Link
+          href="/"
+          className={`flex items-center gap-2 ml-2 transition-all duration-300 ${collapsed ? 'hidden' : 'opacity-100'}`}
+        >
+          <span className="font-semibold text-base whitespace-nowrap">Planner</span>
         </Link>
+
+        {/* 彈性空間 */}
+        {!collapsed && <div className="flex-1" />}
+
+        {/* 收合按鈕 - 展開狀態時 hover 顯示 */}
+        {!collapsed && (
+          <button
+            onClick={toggleCollapsed}
+            className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-all duration-300 opacity-0 group-hover/sidebar:opacity-100"
+            title="收合側邊欄"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
       {/* 側邊欄內容，加上 fade 效果 */}

@@ -6,6 +6,68 @@
 
 ## 2025-11-28
 
+### 🎯 Manus 風格側邊欄收合
+
+**事件**：重新設計側邊欄收合/展開交互，參考 Manus 風格
+
+**新增功能**：
+
+1. **收合狀態**
+   - Logo 區 hover 時隱藏 Logo，顯示展開箭頭（ChevronRight）
+   - 點擊展開側邊欄
+   - 導航圖示置中顯示（40x40px）
+
+2. **展開狀態**
+   - Logo 區右側 hover 顯示收合按鈕（ChevronLeft）
+   - 點擊收合側邊欄
+   - 完整顯示文字和導航項目
+
+3. **動畫效果**
+   - 全局 fade in/out 動畫（`transition-all duration-300`）
+   - 圖示切換使用 opacity 過渡（`transition-opacity duration-200`）
+   - 滑順的展開/收合體驗
+
+**修改檔案**：
+- `src/components/layout/Sidebar.tsx` - 主要邏輯
+- `src/components/chat/ChatSessionList.tsx` - 新建對話按鈕置中
+
+**技術細節**：
+| 項目 | 實作方式 |
+|-----|---------|
+| Logo 切換 | `group/logo` + `group-hover/logo:opacity-0` |
+| 收合按鈕 | `group/sidebar` + `group-hover/sidebar:opacity-100` |
+| 圖示置中 | `justify-center w-10 h-10 mx-auto` |
+| Logo 不變形 | `objectFit: 'contain'` |
+
+**遇到問題**：
+1. `groups is not defined` → 變數名稱應為 `availableGroups`
+2. 收合時跑版 → 調整 padding 和 justify-center
+3. Logo 變形 → 改用 `objectFit: 'contain'`
+
+---
+
+### 📝 任務卡片行內編輯
+
+**事件**：改進任務列表頁面，讓任務卡片固定顯示所有欄位並支援行內編輯
+
+**新增功能**：
+
+1. **固定顯示欄位**
+   - 截止日期、負責人、群組、標籤
+   - 無資料時顯示佔位文字（如「無日期」）
+
+2. **行內編輯**
+   - 日期：Popover 日曆選擇器
+   - 負責人：DropdownMenu 選擇
+   - 群組：DropdownMenu 選擇
+   - 標籤：DropdownMenu 多選
+   - 優先級：點擊徽章切換
+
+**修改檔案**：
+- `app/tasks/page.tsx` - TaskItem 元件重構
+
+---
+
 ### 🎨 側邊欄 UI 優化
 
 **事件**：改善側邊欄使用體驗，包含對話標題顯示、可調整寬度、收合按鈕優化
