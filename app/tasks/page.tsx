@@ -57,6 +57,9 @@ import {
   Filter,
   Users,
   Search,
+  CheckSquare,
+  Square,
+  Edit3,
 } from 'lucide-react'
 
 type SortMode = 'priority' | 'dueDate' | 'assignee' | 'tag' | 'group'
@@ -136,6 +139,29 @@ function parseDescription(description: string) {
 }
 
 // 任務詳情彈窗組件（獨立出來避免重新渲染）
+// 智慧分組映射 - 根據任務內容關鍵字自動分配組別
+const GROUP_KEYWORDS: Record<string, string[]> = {
+  '電訪組': ['電訪', '接通', '電話', '撥打', '通話', '名單', '電銷'],
+  '業務組': ['業務', '銷售', 'SOP', '話術', '成交', '業績', '客戶開發', '報價'],
+  '行政組': ['行政', '文件', '報表', '整理', '歸檔', '會議紀錄'],
+  '客服組': ['客服', '服務', '投訴', '退款', '售後'],
+  '行銷組': ['行銷', '廣告', '推廣', '活動', '促銷'],
+}
+
+// 根據任務內容推薦組別
+function suggestGroupFromContent(title: string, description?: string): string | null {
+  const content = `${title} ${description || ''}`.toLowerCase()
+
+  for (const [groupName, keywords] of Object.entries(GROUP_KEYWORDS)) {
+    for (const keyword of keywords) {
+      if (content.includes(keyword.toLowerCase())) {
+        return groupName
+      }
+    }
+  }
+  return null
+}
+
 function TaskDetailDialog({
   task,
   onClose,
@@ -175,6 +201,11 @@ function TaskDetailDialog({
   const [newTagColor, setNewTagColor] = useState('gray')
   const [newGroupName, setNewGroupName] = useState('')
   const [newGroupColor, setNewGroupColor] = useState('gray')
+  // 執行細節的勾選狀態
+  const [stepChecks, setStepChecks] = useState<boolean[]>([])
+  // 編輯模式狀態
+  const [editingStepIndex, setEditingStepIndex] = useState<number | null>(null)
+  const [editingStepText, setEditingStepText] = useState('')
 
   // 當 task 變化時更新本地狀態
   useEffect(() => {
@@ -182,12 +213,21 @@ function TaskDetailDialog({
     setShowMemberManager(false)
     setShowTagManager(false)
     setShowGroupManager(false)
+    setEditingStepIndex(null)
+    // 初始化步驟勾選狀態
+    if (task?.description) {
+      const sections = parseDescription(task.description)
+      setStepChecks(new Array(sections.steps.length).fill(false))
+    }
   }, [task])
 
   if (!localTask) return null
 
   const sections = localTask.description ? parseDescription(localTask.description) : null
   const hasStructuredContent = sections && (sections.summary || sections.steps.length > 0 || sections.context || sections.quotes.length > 0)
+
+  // 智慧推薦組別
+  const suggestedGroup = !localTask.groupName ? suggestGroupFromContent(localTask.title, localTask.description) : null
 
   // 更新處理函數
   const handleUpdate = async (updates: Partial<Task>) => {
@@ -201,10 +241,10 @@ function TaskDetailDialog({
 
   return (
     <Dialog open={!!task} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto bg-white rounded-xl shadow-xl border-0">
-        <DialogHeader className="pb-4 border-b border-gray-100">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col bg-white rounded-xl shadow-xl border-0">
+        <DialogHeader className="pb-4 border-b border-gray-100 shrink-0">
           <div className="flex-1">
-            <DialogTitle className="text-lg font-semibold leading-relaxed pr-8 text-gray-900">
+            <DialogTitle className="text-xl font-bold leading-relaxed pr-8 text-gray-900">
               {localTask.title}
             </DialogTitle>
             <div className="flex items-center gap-2 mt-3 flex-wrap">
@@ -370,6 +410,18 @@ function TaskDetailDialog({
 
             {/* 標籤和組別區域 - 同一列 */}
             <div className="flex items-center gap-1.5 mt-3 flex-wrap">
+              {/* 智慧推薦組別提示 */}
+              {suggestedGroup && !localTask.groupName && (
+                <button
+                  onClick={() => handleUpdate({ groupName: suggestedGroup })}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors animate-pulse"
+                >
+                  <span className="text-amber-500">💡</span>
+                  建議分到「{suggestedGroup}」
+                  <Check className="h-3 w-3" />
+                </button>
+              )}
+
               {/* 組別 */}
               {localTask.groupName && (
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getGroupColor(localTask.groupName).bg} ${getGroupColor(localTask.groupName).text}`}>
@@ -600,73 +652,155 @@ function TaskDetailDialog({
           </div>
         </DialogHeader>
 
-        <div className="space-y-5 pt-4">
+        {/* 可滾動的內容區域 */}
+        <div className="flex-1 overflow-y-auto space-y-6 pt-4 pr-2">
           {hasStructuredContent ? (
             <>
+              {/* 任務摘要 - 重點突出 */}
               {sections.summary && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium flex items-center gap-2 text-gray-900">
-                    <Info className="h-4 w-4 text-gray-500" />
+                <div className="space-y-3">
+                  <h3 className="text-base font-semibold flex items-center gap-2 text-gray-900">
+                    <div className="w-1 h-5 bg-blue-500 rounded-full" />
                     任務摘要
                   </h3>
-                  <p className="text-sm text-gray-600 leading-relaxed pl-6">
-                    {sections.summary}
-                  </p>
-                </div>
-              )}
-
-              {sections.steps.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium flex items-center gap-2 text-gray-900">
-                    <ListChecks className="h-4 w-4 text-gray-500" />
-                    執行細節
-                  </h3>
-                  <ol className="space-y-1.5 pl-6">
-                    {sections.steps.map((step, i) => (
-                      <li key={i} className="text-sm text-gray-600 flex gap-2">
-                        <span className="font-medium text-gray-900 shrink-0">{i + 1}.</span>
-                        <span className="leading-relaxed">{step}</span>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              )}
-
-              {sections.context && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium flex items-center gap-2 text-gray-900">
-                    <FileText className="h-4 w-4 text-gray-500" />
-                    會議脈絡
-                  </h3>
-                  <div className="text-sm text-gray-600 leading-relaxed pl-6 whitespace-pre-wrap">
-                    {sections.context}
+                  <div className="bg-blue-50/50 rounded-lg p-4 border border-blue-100">
+                    <p className="text-base text-gray-800 leading-relaxed">
+                      {sections.summary}
+                    </p>
                   </div>
                 </div>
               )}
 
+              {/* 執行細節 - Checklist 形式 */}
+              {sections.steps.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-base font-semibold flex items-center gap-2 text-gray-900">
+                      <div className="w-1 h-5 bg-green-500 rounded-full" />
+                      執行細節
+                      <span className="text-xs font-normal text-gray-500 ml-2">
+                        {stepChecks.filter(Boolean).length}/{sections.steps.length} 完成
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="bg-green-50/30 rounded-lg border border-green-100 divide-y divide-green-100">
+                    {sections.steps.map((step, i) => (
+                      <div
+                        key={i}
+                        className={`flex items-start gap-3 p-3 group transition-colors ${
+                          stepChecks[i] ? 'bg-green-50/50' : 'hover:bg-green-50/50'
+                        }`}
+                      >
+                        {/* Checkbox */}
+                        <button
+                          onClick={() => {
+                            const newChecks = [...stepChecks]
+                            newChecks[i] = !newChecks[i]
+                            setStepChecks(newChecks)
+                          }}
+                          className={`mt-0.5 h-5 w-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                            stepChecks[i]
+                              ? 'bg-green-500 border-green-500 text-white'
+                              : 'border-gray-300 hover:border-green-400'
+                          }`}
+                        >
+                          {stepChecks[i] && <Check className="h-3 w-3" />}
+                        </button>
+
+                        {/* 步驟內容 - 可編輯 */}
+                        <div className="flex-1 min-w-0">
+                          {editingStepIndex === i ? (
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={editingStepText}
+                                onChange={(e) => setEditingStepText(e.target.value)}
+                                className="flex-1 text-sm px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-green-500"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    // 儲存編輯（這裡只是本地狀態，實際需要更新 description）
+                                    setEditingStepIndex(null)
+                                  } else if (e.key === 'Escape') {
+                                    setEditingStepIndex(null)
+                                  }
+                                }}
+                              />
+                              <button
+                                onClick={() => setEditingStepIndex(null)}
+                                className="text-xs px-2 py-1 text-gray-500 hover:text-gray-700"
+                              >
+                                完成
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-start gap-2">
+                              <span className={`text-sm font-medium shrink-0 ${stepChecks[i] ? 'text-green-600' : 'text-green-700'}`}>
+                                {i + 1}.
+                              </span>
+                              <span className={`text-sm leading-relaxed ${
+                                stepChecks[i] ? 'line-through text-gray-400' : 'text-gray-700'
+                              }`}>
+                                {step}
+                              </span>
+                              <button
+                                onClick={() => {
+                                  setEditingStepIndex(i)
+                                  setEditingStepText(step)
+                                }}
+                                className="opacity-0 group-hover:opacity-100 ml-auto shrink-0 p-1 text-gray-400 hover:text-gray-600 transition-opacity"
+                                title="編輯"
+                              >
+                                <Edit3 className="h-3 w-3" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 會議脈絡 */}
+              {sections.context && (
+                <div className="space-y-3">
+                  <h3 className="text-base font-semibold flex items-center gap-2 text-gray-900">
+                    <div className="w-1 h-5 bg-purple-500 rounded-full" />
+                    會議脈絡
+                  </h3>
+                  <div className="bg-purple-50/30 rounded-lg p-4 border border-purple-100">
+                    <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                      {sections.context}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 原文引用 */}
               {sections.quotes.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium flex items-center gap-2 text-gray-900">
-                    <MessageSquareQuote className="h-4 w-4 text-gray-500" />
+                <div className="space-y-3">
+                  <h3 className="text-base font-semibold flex items-center gap-2 text-gray-900">
+                    <div className="w-1 h-5 bg-amber-500 rounded-full" />
                     原文引用
                   </h3>
-                  <div className="space-y-2 pl-6">
+                  <div className="space-y-2">
                     {sections.quotes.map((quote, i) => {
                       const timestampMatch = quote.match(/^「?【(\d{1,2}:\d{2})】(.*)」?$/)
                       if (timestampMatch) {
                         const [, timestamp, content] = timestampMatch
                         return (
-                          <div key={i} className="text-sm bg-gray-50 rounded-lg p-3 border-l-3 border-gray-300 flex gap-2">
-                            <span className="shrink-0 font-mono text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded">
+                          <div key={i} className="bg-amber-50/50 rounded-lg p-3 border-l-4 border-amber-400 flex gap-3 items-start">
+                            <span className="shrink-0 font-mono text-xs bg-amber-200 text-amber-800 px-2 py-1 rounded font-medium">
                               {timestamp}
                             </span>
-                            <span className="text-gray-600">{content}</span>
+                            <span className="text-sm text-gray-700 leading-relaxed italic">「{content}」</span>
                           </div>
                         )
                       }
                       return (
-                        <div key={i} className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3 border-l-3 border-gray-300">
-                          {quote}
+                        <div key={i} className="bg-amber-50/50 rounded-lg p-3 border-l-4 border-amber-400">
+                          <span className="text-sm text-gray-700 leading-relaxed italic">「{quote}」</span>
                         </div>
                       )
                     })}
@@ -675,19 +809,22 @@ function TaskDetailDialog({
               )}
             </>
           ) : (
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium flex items-center gap-2 text-gray-900">
-                <FileText className="h-4 w-4 text-gray-500" />
-                任務摘要
+            <div className="space-y-3">
+              <h3 className="text-base font-semibold flex items-center gap-2 text-gray-900">
+                <div className="w-1 h-5 bg-blue-500 rounded-full" />
+                任務內容
               </h3>
-              <p className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap pl-6">
-                {localTask.description}
-              </p>
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
+                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                  {localTask.description || '無詳細描述'}
+                </p>
+              </div>
             </div>
           )}
         </div>
 
-        <div className="flex justify-end gap-2 pt-4 border-t border-gray-100 mt-4">
+        {/* 底部按鈕區域 - 固定在底部 */}
+        <div className="flex justify-end gap-2 pt-4 border-t border-gray-100 mt-4 shrink-0">
           <button
             onClick={onClose}
             className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
@@ -706,7 +843,7 @@ function TaskDetailDialog({
             className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 ${
               localTask.status === 'completed'
                 ? 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
-                : 'text-white bg-gray-900 hover:bg-gray-800'
+                : 'text-white bg-green-600 hover:bg-green-700'
             }`}
           >
             <Check className="h-4 w-4" />
@@ -730,6 +867,11 @@ export default function TasksPage() {
   const [assigneeFilter, setAssigneeFilter] = useState<string | null>(null)
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+
+  // 批次選取狀態
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set())
+  const [isSelectionMode, setIsSelectionMode] = useState(false)
+  const [showBatchEditDialog, setShowBatchEditDialog] = useState(false)
 
   // 團隊成員
   const [teamMembers, setTeamMembers] = useState<string[]>([])
@@ -969,6 +1111,66 @@ export default function TasksPage() {
     await updateTask(id, updates)
   }, [updateTask])
 
+  // 批次選取功能
+  const toggleTaskSelection = useCallback((taskId: string) => {
+    setSelectedTaskIds(prev => {
+      const next = new Set(prev)
+      if (next.has(taskId)) {
+        next.delete(taskId)
+      } else {
+        next.add(taskId)
+      }
+      return next
+    })
+  }, [])
+
+  const selectAllTasks = useCallback(() => {
+    setSelectedTaskIds(new Set(filteredTasks.map(t => t.id)))
+  }, [filteredTasks])
+
+  const deselectAllTasks = useCallback(() => {
+    setSelectedTaskIds(new Set())
+  }, [])
+
+  const toggleSelectionMode = useCallback(() => {
+    setIsSelectionMode(prev => !prev)
+    if (isSelectionMode) {
+      setSelectedTaskIds(new Set())
+    }
+  }, [isSelectionMode])
+
+  // 批次刪除
+  const handleBatchDelete = useCallback(async () => {
+    if (selectedTaskIds.size === 0) return
+    if (!confirm(`確定要刪除 ${selectedTaskIds.size} 個任務嗎？`)) return
+
+    for (const taskId of selectedTaskIds) {
+      await deleteTask(taskId)
+    }
+    setSelectedTaskIds(new Set())
+    setIsSelectionMode(false)
+  }, [selectedTaskIds, deleteTask])
+
+  // 批次更新
+  const handleBatchUpdate = useCallback(async (updates: Partial<Task>) => {
+    if (selectedTaskIds.size === 0) return
+
+    for (const taskId of selectedTaskIds) {
+      await updateTask(taskId, updates)
+    }
+    setShowBatchEditDialog(false)
+  }, [selectedTaskIds, updateTask])
+
+  // 批次完成
+  const handleBatchComplete = useCallback(async () => {
+    if (selectedTaskIds.size === 0) return
+
+    for (const taskId of selectedTaskIds) {
+      await completeTask(taskId)
+    }
+    setSelectedTaskIds(new Set())
+  }, [selectedTaskIds, completeTask])
+
   // 任務項目組件 - 卡片式設計，支援直接編輯
   const TaskItem = ({ task }: { task: Task }) => {
     const hasDescription = task.description && task.description.trim().length > 0
@@ -977,35 +1179,53 @@ export default function TasksPage() {
     const [groupOpen, setGroupOpen] = useState(false)
     const [tagOpen, setTagOpen] = useState(false)
     const [priorityOpen, setPriorityOpen] = useState(false)
+    const isSelected = selectedTaskIds.has(task.id)
 
     return (
       <div
         className={`bg-white rounded-lg border transition-all hover:shadow-sm ${
           task.status === 'completed' ? 'opacity-60' : ''
-        }`}
+        } ${isSelected ? 'ring-2 ring-primary ring-offset-1' : ''}`}
       >
-        {/* 第一行：checkbox + 標題 + 詳情按鈕 + 刪除 */}
+        {/* 第一行：選取框/完成框 + 標題 + 詳情按鈕 + 刪除 */}
         <div className="flex items-center gap-3 px-4 pt-3 pb-2">
-          {/* Checkbox */}
-          <button
-            className={`h-5 w-5 shrink-0 flex items-center justify-center rounded-full border-2 transition-colors ${
-              task.status === 'completed'
-                ? 'bg-green-500 border-green-500 text-white'
-                : 'border-gray-300 hover:border-gray-400'
-            }`}
-            onClick={async (e) => {
-              e.stopPropagation()
-              if (task.status === 'completed') {
-                await updateTask(task.id, { status: 'pending', completedAt: undefined })
-              } else {
-                await completeTask(task.id)
-              }
-            }}
-          >
-            {task.status === 'completed' && (
-              <Check className="h-3 w-3" />
-            )}
-          </button>
+          {/* 選取模式：顯示選取框 */}
+          {isSelectionMode ? (
+            <button
+              className="h-5 w-5 shrink-0 flex items-center justify-center"
+              onClick={(e) => {
+                e.stopPropagation()
+                toggleTaskSelection(task.id)
+              }}
+            >
+              {isSelected ? (
+                <CheckSquare className="h-5 w-5 text-primary" />
+              ) : (
+                <Square className="h-5 w-5 text-muted-foreground hover:text-primary" />
+              )}
+            </button>
+          ) : (
+            /* 正常模式：顯示完成框 */
+            <button
+              className={`h-5 w-5 shrink-0 flex items-center justify-center rounded-full border-2 transition-colors ${
+                task.status === 'completed'
+                  ? 'bg-green-500 border-green-500 text-white'
+                  : 'border-gray-300 hover:border-gray-400'
+              }`}
+              onClick={async (e) => {
+                e.stopPropagation()
+                if (task.status === 'completed') {
+                  await updateTask(task.id, { status: 'pending', completedAt: undefined })
+                } else {
+                  await completeTask(task.id)
+                }
+              }}
+            >
+              {task.status === 'completed' && (
+                <Check className="h-3 w-3" />
+              )}
+            </button>
+          )}
 
           {/* 標題 */}
           <div className="flex-1 min-w-0 flex items-center gap-2">
@@ -1054,7 +1274,7 @@ export default function TasksPage() {
                 mode="single"
                 selected={task.dueDate ? new Date(task.dueDate) : undefined}
                 onSelect={async (date) => {
-                  await updateTask(task.id, { dueDate: date ? date.toISOString() : undefined })
+                  await updateTask(task.id, { dueDate: date || undefined })
                   setDatePickerOpen(false)
                 }}
                 locale={zhTW}
@@ -1285,19 +1505,120 @@ export default function TasksPage() {
     <div className="flex-1 overflow-y-auto bg-gray-50/50">
       <div className="p-6 space-y-5">
         {/* 標題區 - Acctual 風格 */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">任務列表</h1>
-            <button
-              onClick={refresh}
-              disabled={isLoading}
-              className="p-1.5 rounded-md hover:bg-gray-100 text-muted-foreground hover:text-foreground transition-colors"
-              title="重新整理"
-            >
-              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            </button>
-          </div>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold">任務列表</h1>
+          <button
+            onClick={refresh}
+            disabled={isLoading}
+            className="p-1.5 rounded-md hover:bg-gray-100 text-muted-foreground hover:text-foreground transition-colors"
+            title="重新整理"
+          >
+            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          </button>
         </div>
+
+        {/* 批次操作工具列 */}
+        {isSelectionMode && (
+          <div className="flex items-center justify-between bg-gray-100 rounded-lg p-3">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={selectedTaskIds.size === filteredTasks.length ? deselectAllTasks : selectAllTasks}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {selectedTaskIds.size === filteredTasks.length ? (
+                  <CheckSquare className="h-4 w-4" />
+                ) : (
+                  <Square className="h-4 w-4" />
+                )}
+                {selectedTaskIds.size === filteredTasks.length ? '取消全選' : '全選'}
+              </button>
+              <span className="text-sm text-muted-foreground">
+                已選取 {selectedTaskIds.size} / {filteredTasks.length} 個任務
+              </span>
+            </div>
+
+            {selectedTaskIds.size > 0 && (
+              <div className="flex items-center gap-2">
+                {/* 批次編輯 */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-md hover:bg-white transition-colors">
+                      <Edit3 className="h-4 w-4" />
+                      批次編輯
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">設定優先級</div>
+                    {(Object.keys(priorityConfig) as Array<keyof typeof priorityConfig>).map((key) => (
+                      <DropdownMenuItem
+                        key={key}
+                        onClick={() => handleBatchUpdate({ priority: key })}
+                      >
+                        <span className="mr-2">{priorityConfig[key].emoji}</span>
+                        {priorityConfig[key].label}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">設定負責人</div>
+                    {teamMembers.map((member) => (
+                      <DropdownMenuItem
+                        key={member}
+                        onClick={() => handleBatchUpdate({ assignee: member })}
+                      >
+                        <User className="h-3 w-3 mr-2" />
+                        {member}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuItem
+                      onClick={() => handleBatchUpdate({ assignee: undefined })}
+                      className="text-muted-foreground"
+                    >
+                      <X className="h-3 w-3 mr-2" />
+                      清除負責人
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">設定組別</div>
+                    {availableGroups.map((group) => (
+                      <DropdownMenuItem
+                        key={group.name}
+                        onClick={() => handleBatchUpdate({ groupName: group.name })}
+                      >
+                        <span className={`w-2 h-2 rounded-full mr-2 ${getGroupColor(group.name).bg}`} />
+                        {group.name}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuItem
+                      onClick={() => handleBatchUpdate({ groupName: undefined })}
+                      className="text-muted-foreground"
+                    >
+                      <X className="h-3 w-3 mr-2" />
+                      清除組別
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {/* 批次完成 */}
+                <button
+                  onClick={handleBatchComplete}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-md hover:bg-green-50 hover:border-green-300 hover:text-green-600 transition-colors"
+                >
+                  <Check className="h-4 w-4" />
+                  標記完成
+                </button>
+
+                {/* 批次刪除 */}
+                <button
+                  onClick={handleBatchDelete}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-red-200 text-red-600 rounded-md hover:bg-red-50 transition-colors"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  刪除
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Tab 和工具列 - Acctual 風格 */}
         <div className="flex items-center justify-between border-b pb-3">
@@ -1479,6 +1800,27 @@ export default function TasksPage() {
             >
               <Plus className="h-4 w-4" />
               新增
+            </button>
+            {/* 批次選取按鈕 */}
+            <button
+              onClick={toggleSelectionMode}
+              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                isSelectionMode
+                  ? 'bg-primary text-primary-foreground'
+                  : 'border border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              {isSelectionMode ? (
+                <>
+                  <X className="h-4 w-4" />
+                  取消選取
+                </>
+              ) : (
+                <>
+                  <CheckSquare className="h-4 w-4" />
+                  批次選取
+                </>
+              )}
             </button>
           </div>
         </div>

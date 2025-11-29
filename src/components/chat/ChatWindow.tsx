@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useEffect, useState } from 'react'
-import { useAppStore, type AppState, type Message } from '@/lib/store'
+import { useAppStore, type AppState, type Message, type ProcessedTask } from '@/lib/store'
 import { useSupabaseTasks } from '@/lib/useSupabaseTasks'
 import MessageBubble from './MessageBubble'
 import { Card } from '@/components/ui/card'
@@ -16,8 +16,10 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Check, X, CheckSquare, Square, Clock, Loader2, Eye } from 'lucide-react'
+import { Check, X, CheckSquare, Square, Clock, Loader2, Eye, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { recordPositiveExample, recordNegativeExample } from '@/lib/preferences'
+import { learnFromTaskFeedback } from '@/lib/few-shot-learning'
+import { conversationLearningsApi } from '@/lib/supabase-learning'
 
 // 解析 description 內容的函數
 function parseDescription(description: string) {
@@ -98,8 +100,14 @@ export default function ChatWindow() {
   const streamingContent = useAppStore((state: AppState) => state.streamingContent)
   const isLoading = useAppStore((state: AppState) => state.isLoading)
   const pendingTasks = useAppStore((state: AppState) => state.pendingTasks)
+  const setPendingTasks = useAppStore((state: AppState) => state.setPendingTasks)
   const clearPendingTasks = useAppStore((state: AppState) => state.clearPendingTasks)
   const lastInputContext = useAppStore((state: AppState) => state.lastInputContext)
+
+  // 已處理任務歷史
+  const processedTaskGroups = useAppStore((state: AppState) => state.processedTaskGroups)
+  const addProcessedTaskGroup = useAppStore((state: AppState) => state.addProcessedTaskGroup)
+  const updateTaskFeedback = useAppStore((state: AppState) => state.updateTaskFeedback)
 
   // 使用 Supabase 任務 API（同步到雲端）
   const { addTask: addTaskToSupabase } = useSupabaseTasks()
@@ -183,16 +191,27 @@ export default function ChatWindow() {
       lastInputContext.slice(0, 500)
     ).catch(console.error)
 
-    // 從選中列表移除（如果有的話）
+    // 記錄到已處理歷史
+    addProcessedTaskGroup([{ ...task, status: 'added' }], lastInputContext.slice(0, 500))
+
+    // 從 pendingTasks 移除該任務
+    const remainingTasks = pendingTasks.filter((_, i) => i !== index)
+    setPendingTasks(remainingTasks)
+
+    // 更新選中狀態（索引會改變，需要重新計算）
     setSelectedTasks(prev => {
-      const next = new Set(prev)
-      next.delete(index)
+      const next = new Set<number>()
+      prev.forEach(i => {
+        if (i < index) next.add(i)
+        else if (i > index) next.add(i - 1)
+        // i === index 的不加入（被移除了）
+      })
       return next
     })
     setViewingTaskIndex(null)
   }
 
-  // 從詳情中跳過單一任務
+  // 從詳情中跳過單一任務（永久略過，從列表移除）
   const skipSingleTask = (index: number) => {
     const task = pendingTasks[index]
     recordNegativeExample(
@@ -201,24 +220,42 @@ export default function ChatWindow() {
       lastInputContext.slice(0, 500)
     ).catch(console.error)
 
-    // 從選中列表移除
+    // 記錄到已處理歷史
+    addProcessedTaskGroup([{ ...task, status: 'skipped' }], lastInputContext.slice(0, 500))
+
+    // 從 pendingTasks 移除該任務
+    const remainingTasks = pendingTasks.filter((_, i) => i !== index)
+    setPendingTasks(remainingTasks)
+
+    // 更新選中狀態（索引會改變，需要重新計算）
     setSelectedTasks(prev => {
-      const next = new Set(prev)
-      next.delete(index)
+      const next = new Set<number>()
+      prev.forEach(i => {
+        if (i < index) next.add(i)
+        else if (i > index) next.add(i - 1)
+      })
       return next
     })
     setViewingTaskIndex(null)
   }
 
-  // 確認加入選中的任務
+  // 確認加入選中的任務（只處理選中的，保留未選中的）
   const handleConfirmTasks = async () => {
     if (isSubmitting) return // 防止重複點擊
     setIsSubmitting(true)
 
     try {
+      // 只處理選中的任務
+      const processedTasks: ProcessedTask[] = []
+      const confirmedTasks: Record<string, unknown>[] = []
+      const remainingTasks: typeof pendingTasks = []
+
       for (let index = 0; index < pendingTasks.length; index++) {
         const task = pendingTasks[index]
-        if (selectedTasks.has(index)) {
+        const isSelected = selectedTasks.has(index)
+
+        if (isSelected) {
+          // 選中的任務：加入到 Supabase
           try {
             await addTaskToSupabase({
               title: task.title,
@@ -236,9 +273,53 @@ export default function ChatWindow() {
             undefined,
             lastInputContext.slice(0, 500)
           ).catch(console.error)
+          confirmedTasks.push(task as unknown as Record<string, unknown>)
+
+          // 加入已處理歷史（只記錄選中的）
+          processedTasks.push({
+            ...task,
+            status: 'added',
+          })
+        } else {
+          // 未選中的任務：保留在 pendingTasks 中
+          remainingTasks.push(task)
         }
       }
-      clearPendingTasks()
+
+      // 保存選中任務到歷史記錄
+      if (processedTasks.length > 0) {
+        addProcessedTaskGroup(processedTasks, lastInputContext.slice(0, 500))
+      }
+
+      // Few-shot Learning：只記錄選中的任務
+      if (lastInputContext.length > 100 && confirmedTasks.length > 0) {
+        try {
+          // 建立對話學習記錄
+          const learning = await conversationLearningsApi.create({
+            input_content: lastInputContext,
+            input_type: 'transcript',
+          })
+
+          // 更新 AI 回應和用戶回饋
+          await conversationLearningsApi.updateAIResponse(learning.id, {
+            ai_response: { type: 'tasks_extracted' },
+            extracted_tasks: confirmedTasks,
+          })
+
+          // 記錄學習回饋（只有確認的，沒有拒絕的）
+          await learnFromTaskFeedback({
+            conversationLearningId: learning.id,
+            extractedTasks: confirmedTasks,
+            confirmedTasks,
+            rejectedTasks: [],
+          })
+        } catch (err) {
+          console.error('記錄 Few-shot 學習失敗:', err)
+        }
+      }
+
+      // 更新 pendingTasks（保留未選中的）
+      setPendingTasks(remainingTasks)
       setSelectedTasks(new Set())
       setViewingTaskIndex(null)
     } finally {
@@ -248,13 +329,23 @@ export default function ChatWindow() {
 
   // 取消全部
   const handleCancelTasks = () => {
-    pendingTasks.forEach((task) => {
+    // 建立已處理任務列表（全部標記為略過）
+    const processedTasks: ProcessedTask[] = pendingTasks.map((task) => {
       recordNegativeExample(
         task as unknown as Record<string, unknown>,
         'cancelled_all',
         lastInputContext.slice(0, 500)
       ).catch(console.error)
+
+      return {
+        ...task,
+        status: 'skipped' as const,
+      }
     })
+
+    // 保存到歷史記錄
+    addProcessedTaskGroup(processedTasks, lastInputContext.slice(0, 500))
+
     clearPendingTasks()
     setSelectedTasks(new Set())
     setViewingTaskIndex(null)
@@ -332,6 +423,114 @@ export default function ChatWindow() {
                 </div>
               </div>
             )}
+
+            {/* 已處理任務歷史記錄 */}
+            {processedTaskGroups.map((group) => (
+              <div key={group.id} className="py-2">
+                <Card className="p-4 border border-muted bg-muted/30 max-w-3xl mx-auto">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-muted-foreground">📋</span>
+                    <h3 className="font-medium text-sm text-muted-foreground">
+                      萃取了 {group.tasks.length} 個任務
+                      <span className="ml-2 text-xs">
+                        （{group.tasks.filter(t => t.status === 'added').length} 個已加入）
+                      </span>
+                    </h3>
+                  </div>
+
+                  <div className="space-y-2">
+                    {group.tasks.map((task, taskIndex) => (
+                      <div
+                        key={taskIndex}
+                        className={`flex items-start gap-3 p-2 rounded-lg border ${
+                          task.status === 'added'
+                            ? 'bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-800'
+                            : 'bg-gray-50 border-gray-200 dark:bg-gray-900/50 dark:border-gray-700 opacity-60'
+                        }`}
+                      >
+                        {/* 狀態圖示 */}
+                        <div className="mt-0.5 shrink-0">
+                          {task.status === 'added' ? (
+                            <Check className="h-4 w-4 text-green-600" />
+                          ) : (
+                            <X className="h-4 w-4 text-gray-400" />
+                          )}
+                        </div>
+
+                        {/* 任務內容 */}
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm ${task.status === 'skipped' ? 'line-through text-muted-foreground' : ''}`}>
+                            {task.title}
+                          </p>
+                          <div className="flex gap-1.5 mt-1 flex-wrap">
+                            {task.status === 'added' && (
+                              <Badge variant="outline" className="text-xs py-0 bg-green-100 text-green-700 border-green-300">
+                                已加入
+                              </Badge>
+                            )}
+                            {task.status === 'skipped' && (
+                              <Badge variant="outline" className="text-xs py-0 bg-gray-100 text-gray-500 border-gray-300">
+                                已略過
+                              </Badge>
+                            )}
+                            {task.priority && task.status === 'added' && (
+                              <Badge
+                                variant={
+                                  task.priority === 'urgent'
+                                    ? 'destructive'
+                                    : task.priority === 'high'
+                                    ? 'default'
+                                    : 'secondary'
+                                }
+                                className="text-xs py-0"
+                              >
+                                {task.priority}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 👍👎 回饋按鈕 */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            onClick={() => {
+                              updateTaskFeedback(group.id, taskIndex, 'positive')
+                              recordPositiveExample(
+                                task as unknown as Record<string, unknown>,
+                                undefined,
+                                group.sourceContext
+                              ).catch(console.error)
+                            }}
+                            className={`p-1 rounded hover:bg-green-100 transition-colors ${
+                              task.feedback === 'positive' ? 'bg-green-100 text-green-600' : 'text-muted-foreground'
+                            }`}
+                            title="這個任務萃取得好"
+                          >
+                            <ThumbsUp className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              updateTaskFeedback(group.id, taskIndex, 'negative')
+                              recordNegativeExample(
+                                task as unknown as Record<string, unknown>,
+                                'user_feedback',
+                                group.sourceContext
+                              ).catch(console.error)
+                            }}
+                            className={`p-1 rounded hover:bg-red-100 transition-colors ${
+                              task.feedback === 'negative' ? 'bg-red-100 text-red-600' : 'text-muted-foreground'
+                            }`}
+                            title="這個任務萃取得不好"
+                          >
+                            <ThumbsDown className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </div>
+            ))}
           </>
         )}
 

@@ -4,7 +4,177 @@
 
 ---
 
+## 2025-11-29
+
+### 🎯 任務選擇性加入功能
+
+**事件**：優化任務確認流程，支援部分選擇和去重複
+
+**需求描述**：
+1. 用戶選擇部分任務加入時，未選中的任務應保留在待確認卡片中
+2. 重新萃取時，已處理過的任務不應重複出現
+
+**解決方案**：
+
+1. **部分選擇保留**
+   - 修改 `handleConfirmTasks()`：只移除選中的任務，未選中的保留
+   - 修改 `addSingleTask()`：加入後從 pendingTasks 移除該任務
+   - 修改 `skipSingleTask()`：跳過後從 pendingTasks 移除該任務
+   - 自動調整選中索引（因為陣列會變短）
+
+2. **任務去重機制**
+   - 收集所有已處理任務的標題（來自 `processedTaskGroups`）
+   - 收集目前待確認列表的任務標題（來自 `pendingTasks`）
+   - 新萃取的任務與上述標題比對（忽略大小寫）
+   - 過濾掉重複任務後，才合併到 pendingTasks
+
+**修改檔案**：
+- `src/components/chat/ChatWindow.tsx` - 任務確認邏輯
+- `src/components/chat/InputArea.tsx` - 萃取時去重邏輯
+
+---
+
+### 🐛 待確認任務跨對話問題修復
+
+**事件**：修復切換對話時，待確認任務卡片會跟到新對話的問題
+
+**問題描述**：
+- 用戶在對話 A 中萃取任務，產生待確認任務卡片
+- 切換到對話 B 或建立新對話時，任務卡片會跟著出現
+- 預期行為：待確認任務只應停留在原對話中
+
+**解決方案**：
+在 `ChatSessionContext.tsx` 中加入 `clearPendingTasks()` 呼叫：
+1. `switchSession()` - 切換對話時清除待確認任務
+2. `createNewSession()` - 建立新對話時清除待確認任務
+
+**修改檔案**：
+- `src/lib/ChatSessionContext.tsx` - 加入 clearPendingTasks 邏輯
+
+---
+
+### 🎨 任務詳情 Popup 大優化
+
+**事件**：根據用戶回饋，全面優化任務詳情彈窗的 UI/UX
+
+**問題清單**：
+1. Popup 內容被截斷，無法看到完整資訊
+2. 任務沒有智慧分組（電訪相關應分到電訪組）
+3. 執行細節需要可編輯的 Checklist
+4. 排版無重點，字體大小顏色都一樣
+
+**解決方案**：
+
+1. **修復內容截斷**
+   - Dialog 改為 flex 布局：`overflow-hidden flex flex-col`
+   - 內容區域可滾動：`flex-1 overflow-y-auto`
+   - 底部按鈕固定：`shrink-0`
+   - 彈窗尺寸加大：`max-w-3xl max-h-[90vh]`
+
+2. **智慧分組功能**
+   - 根據任務標題和描述的關鍵字自動推薦組別
+   - 組別映射：
+     - 電訪組：電訪、接通、電話、撥打、通話、名單、電銷
+     - 業務組：業務、銷售、SOP、話術、成交、業績、客戶開發、報價
+     - 行政組：行政、文件、報表、整理、歸檔、會議紀錄
+     - 客服組：客服、服務、投訴、退款、售後
+     - 行銷組：行銷、廣告、推廣、活動、促銷
+   - 未分組任務顯示「💡 建議分到『XX組』」按鈕
+
+3. **執行細節 Checklist**
+   - 每個步驟前有可勾選的 checkbox
+   - 顯示完成進度（如「2/5 完成」）
+   - 已勾選項目有刪除線效果
+   - Hover 顯示編輯按鈕，可修改步驟內容
+
+4. **重點排版優化**
+   - 任務摘要：藍色區塊 + 較大字體
+   - 執行細節：綠色區塊 + Checklist
+   - 會議脈絡：紫色區塊
+   - 原文引用：琥珀色區塊 + 左側 4px 邊框 + 斜體引號
+   - 每個區塊左側有彩色指示條
+
+**修改檔案**：
+- `app/tasks/page.tsx` - TaskDetailDialog 元件重構
+
+**技術細節**：
+| 項目 | 實作方式 |
+|-----|---------|
+| 智慧分組 | `suggestGroupFromContent()` 關鍵字匹配 |
+| Checklist | `stepChecks` 狀態陣列 + checkbox 按鈕 |
+| 可滾動內容 | flex 布局 + overflow-y-auto |
+| 顏色區分 | 藍/綠/紫/琥珀色背景 + 左側圓條 |
+
+---
+
 ## 2025-11-28
+
+### 🧠 AI Few-shot 學習系統
+
+**事件**：重新設計 AI 學習系統，改為類似 GPT/Manus 的 Few-shot Learning 架構
+
+**問題背景**：
+- 原本的學習系統使用規則式（關鍵字 → 動作）
+- 用戶希望 AI 能從對話、指令、回饋中全面學習
+- 需要顯示基底 Prompt 讓用戶了解 AI 的核心指令
+
+**新增功能**：
+
+1. **對話完整脈絡學習**
+   - 記錄完整對話：逐字稿 → AI 萃取 → 用戶回饋 → 最終任務
+   - 計算品質分數（確認/拒絕任務比例）
+   - 自動識別高品質範例供 Few-shot 使用
+
+2. **用戶指令學習**
+   - 自動偵測用戶回覆中的指令（如「標題要精簡」）
+   - 辨識模式：「要/不要/請」開頭、「一點」「一些」結尾
+   - 儲存指令並在後續 Prompt 中注入
+
+3. **Few-shot Prompt 生成**
+   - 從最佳範例中選取 2-3 個作為示範
+   - 注入用戶的偏好指令
+   - 只在長篇逐字稿時啟用
+
+4. **基底 Prompt 檢視器**
+   - 設定頁面新增「基底 Prompt」卡片
+   - 可切換檢視「會議逐字稿」和「一般對話」版本
+   - 支援展開/收合和複製功能
+
+**新增檔案**：
+- `supabase/migrations/20241128_conversation_learnings.sql` - 新資料表 Schema
+- `src/lib/supabase-learning.ts` - Supabase API 層
+- `src/lib/few-shot-learning.ts` - Few-shot 學習核心邏輯
+- `src/components/preferences/BasePromptViewer.tsx` - 基底 Prompt 檢視器
+
+**修改檔案**：
+- `app/api/chat/stream/route.ts` - 注入 Few-shot Prompt
+- `src/components/chat/InputArea.tsx` - 從用戶回覆學習指令
+- `src/components/chat/ChatWindow.tsx` - 記錄任務回饋完整脈絡
+- `src/components/preferences/LearningStatus.tsx` - 更新 UI 顯示新統計
+- `src/components/preferences/index.ts` - 匯出 BasePromptViewer
+- `app/settings/page.tsx` - 加入基底 Prompt 卡片
+
+**資料表**：
+| 表名 | 用途 |
+|-----|------|
+| `conversation_learnings` | 儲存完整對話脈絡（輸入、AI 回應、任務、回饋、品質分數）|
+| `user_instructions` | 儲存用戶的明確指令和偏好 |
+
+**技術細節**：
+| 項目 | 實作方式 |
+|-----|---------|
+| 指令偵測 | 正則表達式匹配「要/不要/請」等模式 |
+| 品質分數 | `confirmed / (confirmed + rejected)` |
+| Few-shot 選取 | 按品質分數降序，取前 2-3 筆 |
+| Prompt 注入 | 只在逐字稿 > 300 字時觸發 |
+
+**學習統計 UI**：
+- 對話學習：記錄的完整對話數量
+- 學習指令：用戶的明確指令數量
+- 滿意度：用戶確認任務的比例
+- 平均品質：所有對話的平均品質分數
+
+---
 
 ### 🎯 Manus 風格側邊欄收合
 

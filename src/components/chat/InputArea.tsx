@@ -8,6 +8,7 @@ import { useChatSessionContext } from '@/lib/ChatSessionContext'
 import { useConversationSummary } from '@/lib/useConversationSummary'
 import { Send, Paperclip, X, Loader2, Image as ImageIcon, Brain } from 'lucide-react'
 import { parseAIResponse } from '@/lib/utils-client'
+import { learnFromUserReply } from '@/lib/few-shot-learning'
 
 export default function InputArea() {
   const [input, setInput] = useState('')
@@ -24,6 +25,8 @@ export default function InputArea() {
     appendStreamingContent,
     clearStreamingContent,
     setPendingTasks,
+    pendingTasks,
+    processedTaskGroups,
     setLastInputContext,
   } = useAppStore()
 
@@ -95,6 +98,15 @@ export default function InputArea() {
 
     // 記錄輸入上下文（用於 AI 學習）
     setLastInputContext(userMessage)
+
+    // 嘗試從用戶回覆中學習指令和偏好
+    // 如果用戶的訊息包含指令性語句（例如「標題太長」、「不要萃取這類」）
+    if (messages.length > 0) {
+      // 只有在已有對話的情況下才嘗試學習（避免學習第一則訊息）
+      learnFromUserReply(userMessage, {}).catch(err => {
+        console.error('從用戶回覆學習失敗:', err)
+      })
+    }
 
     const currentImage = imagePreview
     setInput('')
@@ -192,9 +204,32 @@ export default function InputArea() {
                 // 同步儲存到雲端
                 saveMessage(assistantMessageObj)
 
-                // 如果有萃取出的任務，設定為待確認
+                // 如果有萃取出的任務，設定為待確認（過濾重複）
                 if (parsed.type === 'tasks_extracted' && parsed.tasks && parsed.tasks.length > 0) {
-                  setPendingTasks(parsed.tasks as ExtractedTask[])
+                  // 收集已處理過的任務標題（正規化後比對）
+                  const processedTitles = new Set<string>()
+                  processedTaskGroups.forEach(group => {
+                    group.tasks.forEach(task => {
+                      processedTitles.add(task.title.trim().toLowerCase())
+                    })
+                  })
+
+                  // 收集目前待確認列表中的任務標題
+                  const pendingTitles = new Set<string>()
+                  pendingTasks.forEach(task => {
+                    pendingTitles.add(task.title.trim().toLowerCase())
+                  })
+
+                  // 過濾掉已處理過或已在待確認列表中的任務
+                  const newTasks = (parsed.tasks as ExtractedTask[]).filter(task => {
+                    const normalizedTitle = task.title.trim().toLowerCase()
+                    return !processedTitles.has(normalizedTitle) && !pendingTitles.has(normalizedTitle)
+                  })
+
+                  // 合併現有 pending 任務和新任務
+                  if (newTasks.length > 0) {
+                    setPendingTasks([...pendingTasks, ...newTasks])
+                  }
                 }
 
                 // 記錄 API 使用量

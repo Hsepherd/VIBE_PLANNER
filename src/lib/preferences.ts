@@ -30,7 +30,17 @@ export interface LearningStats {
   totalFeedback: number
   thumbsUp: number
   thumbsDown: number
-  learningProgress: number // 0-100
+  totalLearningCount: number // 總學習次數（回饋 + 範例）
+  lastLearningTime: Date | null // 最近一次學習時間
+  recentLearnings: RecentLearning[] // 最近學習的內容
+}
+
+export interface RecentLearning {
+  type: 'preference' | 'example'
+  category?: string
+  pattern?: string
+  action?: string
+  time: Date
 }
 
 // ============ 偏好管理 ============
@@ -343,17 +353,53 @@ async function learnFilterRule(
 
 // 取得學習統計
 export async function getLearningStats(): Promise<LearningStats> {
-  const [exampleStats, feedbackStats, prefs] = await Promise.all([
+  const [exampleStats, feedbackStats, prefs, recentExamples, dbPrefs] = await Promise.all([
     learningExamplesApi.getStats(),
     feedbackLogsApi.getStats(),
     getActivePreferences(),
+    learningExamplesApi.getRecent(5),
+    preferencesApi.getAll(),
   ])
 
-  // 計算學習進度（基於範例數量和偏好數量）
-  const exampleScore = Math.min(exampleStats.total / 50, 1) * 40 // 最多 40%
-  const prefScore = Math.min(prefs.length / 10, 1) * 30 // 最多 30%
-  const feedbackScore = Math.min(feedbackStats.total / 30, 1) * 30 // 最多 30%
-  const learningProgress = Math.round(exampleScore + prefScore + feedbackScore)
+  // 總學習次數
+  const totalLearningCount = exampleStats.total + feedbackStats.total
+
+  // 最近學習的內容：結合最近的範例和偏好
+  const recentLearnings: RecentLearning[] = []
+
+  // 加入最近的偏好規則（按更新時間排序）
+  const sortedPrefs = dbPrefs
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+    .slice(0, 5)
+
+  for (const pref of sortedPrefs) {
+    recentLearnings.push({
+      type: 'preference',
+      category: pref.category,
+      pattern: pref.pattern,
+      action: pref.action,
+      time: new Date(pref.updated_at),
+    })
+  }
+
+  // 加入最近的學習範例
+  for (const ex of recentExamples) {
+    const title = (ex.original_content?.title as string) || '未知任務'
+    recentLearnings.push({
+      type: 'example',
+      category: ex.example_type,
+      pattern: title.slice(0, 30),
+      action: ex.source_action,
+      time: new Date(ex.created_at),
+    })
+  }
+
+  // 依時間排序，取最近 5 筆
+  recentLearnings.sort((a, b) => b.time.getTime() - a.time.getTime())
+  const topRecentLearnings = recentLearnings.slice(0, 5)
+
+  // 最近一次學習時間
+  const lastLearningTime = topRecentLearnings.length > 0 ? topRecentLearnings[0].time : null
 
   return {
     totalExamples: exampleStats.total,
@@ -362,7 +408,9 @@ export async function getLearningStats(): Promise<LearningStats> {
     totalFeedback: feedbackStats.total,
     thumbsUp: feedbackStats.thumbsUp,
     thumbsDown: feedbackStats.thumbsDown,
-    learningProgress,
+    totalLearningCount,
+    lastLearningTime,
+    recentLearnings: topRecentLearnings,
   }
 }
 

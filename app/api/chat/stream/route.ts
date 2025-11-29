@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import openai, { getFullSystemPrompt, getMeetingTranscriptPrompt, isLongMeetingTranscript } from '@/lib/openai'
 import { generatePreferencePrompt, shouldInjectPreferences } from '@/lib/preferences'
+import { generateFewShotPrompt } from '@/lib/few-shot-learning'
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,7 +15,20 @@ export async function POST(request: NextRequest) {
     // 根據內容類型選擇不同的 prompt
     let systemPrompt = isLongTranscript ? getMeetingTranscriptPrompt() : getFullSystemPrompt()
 
-    // 如果符合條件，注入使用者偏好
+    // 注入 AI 學習記憶（Few-shot Learning）
+    // 對於長篇逐字稿，注入過往成功案例和用戶偏好
+    if (isLongTranscript) {
+      try {
+        const fewShotPrompt = await generateFewShotPrompt()
+        if (fewShotPrompt) {
+          systemPrompt += '\n' + fewShotPrompt
+        }
+      } catch (error) {
+        console.error('載入 AI 學習記憶失敗:', error)
+      }
+    }
+
+    // 如果符合條件，注入使用者偏好（舊版，保持向後相容）
     if (lastUserMessage && shouldInjectPreferences(lastUserMessage.content)) {
       try {
         const preferencePrompt = await generatePreferencePrompt()
@@ -23,7 +37,6 @@ export async function POST(request: NextRequest) {
         }
       } catch (error) {
         console.error('載入偏好設定失敗:', error)
-        // 即使偏好載入失敗，仍繼續處理請求
       }
     }
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { useChatSessionContext, type ChatSession } from '@/lib/ChatSessionContext'
 import { usePathname, useRouter } from 'next/navigation'
@@ -13,6 +13,7 @@ import {
   X,
   Pin,
   PinOff,
+  Loader2,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
@@ -39,15 +40,24 @@ export function ChatSessionList({ collapsed = false, onSessionClick }: ChatSessi
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [isCreating, setIsCreating] = useState(false)  // 防止重複點擊
 
-  // 處理新對話
-  const handleNewChat = async () => {
-    await createNewSession()
-    if (pathname !== '/') {
-      router.push('/')
+  // 處理新對話 - 加入防重複點擊
+  const handleNewChat = useCallback(async () => {
+    if (isCreating) return  // 防止重複點擊
+    setIsCreating(true)
+
+    try {
+      // 先跳轉（樂觀 UI）
+      if (pathname !== '/') {
+        router.push('/')
+      }
+      await createNewSession()
+      onSessionClick?.()
+    } finally {
+      setIsCreating(false)
     }
-    onSessionClick?.()
-  }
+  }, [isCreating, pathname, router, createNewSession, onSessionClick])
 
   // 處理切換對話
   const handleSwitchSession = async (sessionId: string) => {
@@ -90,10 +100,13 @@ export function ChatSessionList({ collapsed = false, onSessionClick }: ChatSessi
       <div className="flex justify-center py-2">
         <button
           onClick={handleNewChat}
-          className="w-10 h-10 flex items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+          disabled={isCreating}
+          className={`w-10 h-10 flex items-center justify-center rounded-lg bg-primary text-primary-foreground transition-colors ${
+            isCreating ? 'opacity-50 cursor-not-allowed' : 'hover:bg-primary/90'
+          }`}
           title="新對話"
         >
-          <Plus className="h-4 w-4" />
+          {isCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
         </button>
       </div>
     )
@@ -105,10 +118,15 @@ export function ChatSessionList({ collapsed = false, onSessionClick }: ChatSessi
       <div className="px-3 py-2">
         <button
           onClick={handleNewChat}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-muted-foreground/30 text-muted-foreground hover:text-foreground hover:border-foreground/50 hover:bg-muted/30 transition-all text-sm"
+          disabled={isCreating}
+          className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed text-sm transition-all ${
+            isCreating
+              ? 'border-muted-foreground/20 text-muted-foreground/50 cursor-not-allowed'
+              : 'border-muted-foreground/30 text-muted-foreground hover:text-foreground hover:border-foreground/50 hover:bg-muted/30'
+          }`}
         >
-          <Plus className="h-4 w-4" />
-          <span>新對話</span>
+          {isCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          <span>{isCreating ? '建立中...' : '新對話'}</span>
         </button>
       </div>
 

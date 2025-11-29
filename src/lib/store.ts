@@ -105,6 +105,12 @@ export interface AppState {
   setPendingTasks: (tasks: ExtractedTask[]) => void
   clearPendingTasks: () => void
 
+  // 已處理任務歷史（保留在對話中顯示）
+  processedTaskGroups: ProcessedTaskGroup[]
+  addProcessedTaskGroup: (tasks: ProcessedTask[], sourceContext?: string) => void
+  updateTaskFeedback: (groupId: string, taskIndex: number, feedback: 'positive' | 'negative') => void
+  clearProcessedTaskGroups: () => void
+
   // AI 學習偏好
   lastInputContext: string  // 最後一次輸入的上下文（用於學習）
   setLastInputContext: (context: string) => void
@@ -118,6 +124,20 @@ export interface ExtractedTask {
   assignee?: string
   priority?: 'low' | 'medium' | 'high' | 'urgent'
   project?: string
+}
+
+// 已處理任務的狀態
+export interface ProcessedTask extends ExtractedTask {
+  status: 'added' | 'skipped'  // 加入或略過
+  feedback?: 'positive' | 'negative'  // 使用者回饋
+}
+
+// 已處理任務群組（一次萃取的結果）
+export interface ProcessedTaskGroup {
+  id: string
+  timestamp: Date
+  tasks: ProcessedTask[]
+  sourceContext?: string  // 來源上下文（逐字稿片段）
 }
 
 // 生成 UUID
@@ -253,6 +273,35 @@ export const useAppStore = create<AppState>()(
       setPendingTasks: (tasks) => set({ pendingTasks: tasks }),
       clearPendingTasks: () => set({ pendingTasks: [] }),
 
+      // 已處理任務歷史
+      processedTaskGroups: [],
+      addProcessedTaskGroup: (tasks, sourceContext) =>
+        set((state) => ({
+          processedTaskGroups: [
+            ...state.processedTaskGroups,
+            {
+              id: generateId(),
+              timestamp: new Date(),
+              tasks,
+              sourceContext,
+            },
+          ],
+        })),
+      updateTaskFeedback: (groupId, taskIndex, feedback) =>
+        set((state) => ({
+          processedTaskGroups: state.processedTaskGroups.map((group) =>
+            group.id === groupId
+              ? {
+                  ...group,
+                  tasks: group.tasks.map((task, i) =>
+                    i === taskIndex ? { ...task, feedback } : task
+                  ),
+                }
+              : group
+          ),
+        })),
+      clearProcessedTaskGroups: () => set({ processedTaskGroups: [] }),
+
       // AI 學習偏好
       lastInputContext: '',
       setLastInputContext: (context) => set({ lastInputContext: context }),
@@ -264,6 +313,7 @@ export const useAppStore = create<AppState>()(
         tasks: state.tasks,
         projects: state.projects,
         apiUsage: state.apiUsage,
+        processedTaskGroups: state.processedTaskGroups,
       }),
     }
   )

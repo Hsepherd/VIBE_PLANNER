@@ -61,6 +61,7 @@ export function ChatSessionProvider({ children }: { children: ReactNode }) {
 
   const setMessages = useAppStore((state) => state.setMessages)
   const clearMessages = useAppStore((state) => state.clearMessages)
+  const clearPendingTasks = useAppStore((state) => state.clearPendingTasks)
 
   // 載入指定 session 的訊息
   const loadSessionMessages = useCallback(async (sessionId: string) => {
@@ -107,8 +108,9 @@ export function ChatSessionProvider({ children }: { children: ReactNode }) {
     recentlyCreatedSessionIdRef.current = null
     pendingSessionPromiseRef.current = null
     clearMessages()
+    clearPendingTasks() // 切換對話時清除待確認任務
     await loadSessionMessages(sessionId)
-  }, [currentSessionId, clearMessages, loadSessionMessages])
+  }, [currentSessionId, clearMessages, clearPendingTasks, loadSessionMessages])
 
   // 建立新 session
   const createNewSession = useCallback(async (title = '新對話'): Promise<ChatSession | null> => {
@@ -121,13 +123,14 @@ export function ChatSessionProvider({ children }: { children: ReactNode }) {
       setSessions(prev => [localSession, ...prev])
       setCurrentSessionId(localSession.id)
       clearMessages()
+      clearPendingTasks() // 建立新對話時清除待確認任務
 
       return localSession
     } catch (error) {
       console.error('建立新對話失敗:', error)
       return null
     }
-  }, [user, clearMessages])
+  }, [user, clearMessages, clearPendingTasks])
 
   // 確保有 session（如果沒有就建立一個）
   const ensureSession = useCallback(async (): Promise<string | null> => {

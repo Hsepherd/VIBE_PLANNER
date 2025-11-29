@@ -6,7 +6,7 @@ import { Separator } from '@/components/ui/separator'
 import { useAppStore, type AppState, type ApiUsageRecord } from '@/lib/store'
 import { Trash2, Download, AlertTriangle, DollarSign, Cloud, CheckCircle2 } from 'lucide-react'
 import { useState } from 'react'
-import { LearningStatus } from '@/components/preferences'
+import { LearningStatus, BasePromptViewer } from '@/components/preferences'
 
 export default function SettingsPage() {
   const clearMessages = useAppStore((state: AppState) => state.clearMessages)
@@ -57,6 +57,9 @@ export default function SettingsPage() {
 
         {/* AI 學習狀態 */}
         <LearningStatus />
+
+        {/* 基底 Prompt */}
+        <BasePromptViewer />
 
         {/* 雲端同步狀態 */}
         <Card>
