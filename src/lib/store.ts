@@ -100,7 +100,15 @@ export interface AppState {
   appendStreamingContent: (content: string) => void
   clearStreamingContent: () => void
 
-  // 待確認任務
+  // 待確認任務群組（每次萃取是獨立群組）
+  pendingTaskGroups: PendingTaskGroup[]
+  addPendingTaskGroup: (tasks: ExtractedTask[], sourceContext?: string) => void
+  updatePendingTaskGroup: (groupId: string, tasks: ExtractedTask[]) => void
+  updatePendingTask: (groupId: string, taskIndex: number, updates: Partial<ExtractedTask>) => void
+  removePendingTaskGroup: (groupId: string) => void
+  clearPendingTaskGroups: () => void
+
+  // 向下相容（舊版）
   pendingTasks: ExtractedTask[]
   setPendingTasks: (tasks: ExtractedTask[]) => void
   clearPendingTasks: () => void
@@ -124,6 +132,15 @@ export interface ExtractedTask {
   assignee?: string
   priority?: 'low' | 'medium' | 'high' | 'urgent'
   project?: string
+  group?: string  // 任務組別：電訪組、業務組、行政組、客服組、行銷組、財務組
+}
+
+// 待確認任務群組（每次萃取是一個群組）
+export interface PendingTaskGroup {
+  id: string
+  timestamp: Date
+  tasks: ExtractedTask[]
+  sourceContext?: string  // 來源逐字稿片段
 }
 
 // 已處理任務的狀態
@@ -268,10 +285,51 @@ export const useAppStore = create<AppState>()(
       })),
       clearStreamingContent: () => set({ streamingContent: '' }),
 
-      // 待確認任務
+      // 待確認任務群組
+      pendingTaskGroups: [],
+      addPendingTaskGroup: (tasks, sourceContext) =>
+        set((state) => ({
+          pendingTaskGroups: [
+            ...state.pendingTaskGroups,
+            {
+              id: generateId(),
+              timestamp: new Date(),
+              tasks,
+              sourceContext,
+            },
+          ],
+        })),
+      updatePendingTaskGroup: (groupId, tasks) =>
+        set((state) => ({
+          pendingTaskGroups: tasks.length > 0
+            ? state.pendingTaskGroups.map((group) =>
+                group.id === groupId ? { ...group, tasks } : group
+              )
+            : state.pendingTaskGroups.filter((group) => group.id !== groupId),
+        })),
+      updatePendingTask: (groupId, taskIndex, updates) =>
+        set((state) => ({
+          pendingTaskGroups: state.pendingTaskGroups.map((group) =>
+            group.id === groupId
+              ? {
+                  ...group,
+                  tasks: group.tasks.map((task, i) =>
+                    i === taskIndex ? { ...task, ...updates } : task
+                  ),
+                }
+              : group
+          ),
+        })),
+      removePendingTaskGroup: (groupId) =>
+        set((state) => ({
+          pendingTaskGroups: state.pendingTaskGroups.filter((group) => group.id !== groupId),
+        })),
+      clearPendingTaskGroups: () => set({ pendingTaskGroups: [] }),
+
+      // 向下相容（舊版，已棄用）
       pendingTasks: [],
       setPendingTasks: (tasks) => set({ pendingTasks: tasks }),
-      clearPendingTasks: () => set({ pendingTasks: [] }),
+      clearPendingTasks: () => set({ pendingTasks: [], pendingTaskGroups: [] }),
 
       // 已處理任務歷史
       processedTaskGroups: [],

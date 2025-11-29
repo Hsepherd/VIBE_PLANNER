@@ -6,6 +6,54 @@
 
 ## 2025-11-29
 
+### 🎯 負責人判斷優化 + 快速修正功能
+
+**事件**：解決 AI 任務萃取時負責人判斷錯誤的問題
+
+**問題描述**：
+1. 負責人分配不準確（如電訪名單任務分配給非電訪組成員）
+2. 負責人填錯人（Karen 的任務被標為 Vicky）
+3. 把沒發言的人設為負責人
+4. 報告當成任務（只是報告進度，沒有後續行動）
+
+**解決方案**：
+
+1. **強化 Prompt 錯誤範例**
+   - 加入 4 個具體的錯誤案例分析（含逐字稿範例）
+   - 案例 1：提出需求者 ≠ 執行者
+   - 案例 2：說「我有請 XX 分析」= 執行者
+   - 案例 3：只有說「好，我來」的人才是負責人
+   - 案例 4：沒人明確接任務時填 null
+   - 新增 6 條「絕對不要這樣判斷」規則
+
+2. **負責人快速修正 UI**
+   - 任務卡片負責人 Badge 可點擊編輯
+   - 任務詳情 Dialog 中也可編輯負責人
+   - 使用 Popover 彈出輸入框
+   - 顯示「👤 未指定」當沒有負責人時
+   - 鉛筆圖示提示可編輯
+
+3. **修正記錄到學習系統**
+   - 用戶修改負責人後自動記錄到 `learning_examples` 表
+   - 記錄 `correction_type: 'assignee'`、`old_value`、`new_value`
+   - 保存原始對話脈絡 `sourceContext`
+   - Console 輸出：`[學習] 記錄負責人修正: XX → YY`
+
+**修改檔案**：
+- `src/lib/openai.ts` - Prompt 強化（加入錯誤案例）
+- `src/lib/store.ts` - 新增 `updatePendingTask()` 函數
+- `src/components/chat/ChatWindow.tsx` - 負責人編輯 UI
+
+**技術細節**：
+| 項目 | 實作方式 |
+|-----|---------|
+| 錯誤範例 | 4 個具體案例 + 逐字稿 + ✅❌ 標示 |
+| 編輯 UI | Popover + Input + 確認按鈕 |
+| 學習記錄 | `recordNegativeExample()` + reason='user_corrected_assignee' |
+| 狀態更新 | `updatePendingTask(groupId, taskIndex, { assignee })` |
+
+---
+
 ### 🎯 任務選擇性加入功能
 
 **事件**：優化任務確認流程，支援部分選擇和去重複

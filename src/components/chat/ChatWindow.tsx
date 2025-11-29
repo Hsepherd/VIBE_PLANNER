@@ -1,7 +1,7 @@
 'use client'
 
-import { useRef, useEffect, useState } from 'react'
-import { useAppStore, type AppState, type Message, type ProcessedTask } from '@/lib/store'
+import { useRef, useEffect, useState, useMemo } from 'react'
+import { useAppStore, type AppState, type Message, type ProcessedTask, type ProcessedTaskGroup, type PendingTaskGroup, type ExtractedTask } from '@/lib/store'
 import { useSupabaseTasks } from '@/lib/useSupabaseTasks'
 import MessageBubble from './MessageBubble'
 import { Card } from '@/components/ui/card'
@@ -16,7 +16,13 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Check, X, CheckSquare, Square, Clock, Loader2, Eye, ThumbsUp, ThumbsDown } from 'lucide-react'
+import { Check, X, CheckSquare, Square, Clock, Loader2, Eye, ThumbsUp, ThumbsDown, Pencil } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { recordPositiveExample, recordNegativeExample } from '@/lib/preferences'
 import { learnFromTaskFeedback } from '@/lib/few-shot-learning'
 import { conversationLearningsApi } from '@/lib/supabase-learning'
@@ -99,10 +105,14 @@ export default function ChatWindow() {
   const messages = useAppStore((state: AppState) => state.messages)
   const streamingContent = useAppStore((state: AppState) => state.streamingContent)
   const isLoading = useAppStore((state: AppState) => state.isLoading)
-  const pendingTasks = useAppStore((state: AppState) => state.pendingTasks)
-  const setPendingTasks = useAppStore((state: AppState) => state.setPendingTasks)
-  const clearPendingTasks = useAppStore((state: AppState) => state.clearPendingTasks)
   const lastInputContext = useAppStore((state: AppState) => state.lastInputContext)
+
+  // 待確認任務群組（新版）
+  const pendingTaskGroups = useAppStore((state: AppState) => state.pendingTaskGroups)
+  const updatePendingTaskGroup = useAppStore((state: AppState) => state.updatePendingTaskGroup)
+  const updatePendingTask = useAppStore((state: AppState) => state.updatePendingTask)
+  const removePendingTaskGroup = useAppStore((state: AppState) => state.removePendingTaskGroup)
+  const clearPendingTaskGroups = useAppStore((state: AppState) => state.clearPendingTaskGroups)
 
   // 已處理任務歷史
   const processedTaskGroups = useAppStore((state: AppState) => state.processedTaskGroups)
@@ -115,62 +125,156 @@ export default function ChatWindow() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // 選中的任務
-  const [selectedTasks, setSelectedTasks] = useState<Set<number>>(new Set())
-  // 當前查看詳情的任務索引
-  const [viewingTaskIndex, setViewingTaskIndex] = useState<number | null>(null)
+  // 選中的任務（按群組 ID + 任務索引）
+  const [selectedTasks, setSelectedTasks] = useState<Map<string, Set<number>>>(new Map())
+  // 當前查看詳情的任務（群組 ID + 任務索引）
+  const [viewingTask, setViewingTask] = useState<{ groupId: string; taskIndex: number } | null>(null)
   // 防止重複點擊
   const [isSubmitting, setIsSubmitting] = useState(false)
+  // 編輯負責人狀態
+  const [editingAssignee, setEditingAssignee] = useState<{ groupId: string; taskIndex: number } | null>(null)
+  const [assigneeInputValue, setAssigneeInputValue] = useState('')
 
-  // 當有新的待確認任務時，預設不選（讓用戶自己決定）
+  // 當有新的待確認任務群組時，預設不選（讓用戶自己決定）
   useEffect(() => {
-    if (pendingTasks.length > 0) {
-      setSelectedTasks(new Set())
-      setViewingTaskIndex(null)
+    if (pendingTaskGroups.length > 0) {
+      setSelectedTasks(new Map())
+      setViewingTask(null)
     }
-  }, [pendingTasks])
+  }, [pendingTaskGroups])
 
   // 自動捲動到最新訊息
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [messages, streamingContent])
+  }, [messages, streamingContent, processedTaskGroups, pendingTaskGroups])
 
-  // 切換選中狀態（只在勾選框點擊時觸發）
-  const toggleTask = (index: number, e: React.MouseEvent) => {
+  // 合併 messages、processedTaskGroups、pendingTaskGroups 成時間線
+  type TimelineItem =
+    | { type: 'message'; data: Message }
+    | { type: 'processedGroup'; data: ProcessedTaskGroup }
+    | { type: 'pendingGroup'; data: PendingTaskGroup }
+
+  const timeline = useMemo(() => {
+    const items: TimelineItem[] = []
+
+    // 加入所有訊息
+    messages.forEach(msg => {
+      items.push({ type: 'message', data: msg })
+    })
+
+    // 加入所有已處理任務群組
+    processedTaskGroups.forEach(group => {
+      items.push({ type: 'processedGroup', data: group })
+    })
+
+    // 加入所有待確認任務群組
+    pendingTaskGroups.forEach(group => {
+      items.push({ type: 'pendingGroup', data: group })
+    })
+
+    // 按時間排序
+    items.sort((a, b) => {
+      const timeA = new Date(a.data.timestamp).getTime()
+      const timeB = new Date(b.data.timestamp).getTime()
+      return timeA - timeB
+    })
+
+    return items
+  }, [messages, processedTaskGroups, pendingTaskGroups])
+
+  // 切換選中狀態（群組內的任務）
+  const toggleTask = (groupId: string, taskIndex: number, e: React.MouseEvent) => {
     e.stopPropagation()
     setSelectedTasks(prev => {
-      const next = new Set(prev)
-      if (next.has(index)) {
-        next.delete(index)
+      const next = new Map(prev)
+      const groupSet = next.get(groupId) || new Set()
+      const newGroupSet = new Set(groupSet)
+      if (newGroupSet.has(taskIndex)) {
+        newGroupSet.delete(taskIndex)
       } else {
-        next.add(index)
+        newGroupSet.add(taskIndex)
+      }
+      next.set(groupId, newGroupSet)
+      return next
+    })
+  }
+
+  // 全選/取消全選（單一群組）
+  const toggleAllInGroup = (groupId: string, taskCount: number) => {
+    setSelectedTasks(prev => {
+      const next = new Map(prev)
+      const groupSet = next.get(groupId) || new Set()
+      if (groupSet.size === taskCount) {
+        next.set(groupId, new Set())
+      } else {
+        next.set(groupId, new Set(Array.from({ length: taskCount }, (_, i) => i)))
       }
       return next
     })
   }
 
-  // 全選/取消全選
-  const toggleAll = () => {
-    if (selectedTasks.size === pendingTasks.length) {
-      setSelectedTasks(new Set())
-    } else {
-      setSelectedTasks(new Set(pendingTasks.map((_, index) => index)))
-    }
+  // 打開任務詳情
+  const openTaskDetail = (groupId: string, taskIndex: number) => {
+    setViewingTask({ groupId, taskIndex })
   }
 
-  // 打開任務詳情
-  const openTaskDetail = (index: number) => {
-    setViewingTaskIndex(index)
+  // 確認修改負責人
+  const confirmAssigneeEdit = async (groupId: string, taskIndex: number) => {
+    const group = pendingTaskGroups.find(g => g.id === groupId)
+    if (!group) return
+
+    const task = group.tasks[taskIndex]
+    const oldAssignee = task.assignee
+    const newAssignee = assigneeInputValue.trim() || null
+
+    // 更新任務
+    updatePendingTask(groupId, taskIndex, { assignee: newAssignee || undefined })
+
+    // 記錄用戶修正到學習系統
+    if (oldAssignee !== newAssignee) {
+      try {
+        await recordNegativeExample(
+          { ...task, correction_type: 'assignee', old_value: oldAssignee, new_value: newAssignee } as unknown as Record<string, unknown>,
+          'user_corrected_assignee',
+          group.sourceContext?.slice(0, 500)
+        )
+        console.log(`[學習] 記錄負責人修正: ${oldAssignee} → ${newAssignee}`)
+      } catch (err) {
+        console.error('記錄負責人修正失敗:', err)
+      }
+    }
+
+    setEditingAssignee(null)
+    setAssigneeInputValue('')
   }
+
+  // 取消編輯負責人
+  const cancelAssigneeEdit = () => {
+    setEditingAssignee(null)
+    setAssigneeInputValue('')
+  }
+
+  // 取得當前查看的任務
+  const currentViewingTask = useMemo(() => {
+    if (!viewingTask) return null
+    const group = pendingTaskGroups.find(g => g.id === viewingTask.groupId)
+    return group?.tasks[viewingTask.taskIndex] || null
+  }, [viewingTask, pendingTaskGroups])
 
   // 從詳情中加入單一任務
-  const addSingleTask = async (index: number) => {
-    if (isSubmitting) return // 防止重複點擊
+  const addSingleTask = async (groupId: string, taskIndex: number) => {
+    if (isSubmitting) return
     setIsSubmitting(true)
 
-    const task = pendingTasks[index]
+    const group = pendingTaskGroups.find(g => g.id === groupId)
+    if (!group) {
+      setIsSubmitting(false)
+      return
+    }
+    const task = group.tasks[taskIndex]
+
     try {
       await addTaskToSupabase({
         title: task.title,
@@ -185,77 +289,68 @@ export default function ChatWindow() {
     } finally {
       setIsSubmitting(false)
     }
+
     recordPositiveExample(
       task as unknown as Record<string, unknown>,
       undefined,
-      lastInputContext.slice(0, 500)
+      group.sourceContext?.slice(0, 500)
     ).catch(console.error)
 
     // 記錄到已處理歷史
-    addProcessedTaskGroup([{ ...task, status: 'added' }], lastInputContext.slice(0, 500))
+    addProcessedTaskGroup([{ ...task, status: 'added' }], group.sourceContext)
 
-    // 從 pendingTasks 移除該任務
-    const remainingTasks = pendingTasks.filter((_, i) => i !== index)
-    setPendingTasks(remainingTasks)
+    // 從群組中移除該任務
+    const remainingTasks = group.tasks.filter((_, i) => i !== taskIndex)
+    updatePendingTaskGroup(groupId, remainingTasks)
 
-    // 更新選中狀態（索引會改變，需要重新計算）
-    setSelectedTasks(prev => {
-      const next = new Set<number>()
-      prev.forEach(i => {
-        if (i < index) next.add(i)
-        else if (i > index) next.add(i - 1)
-        // i === index 的不加入（被移除了）
-      })
-      return next
-    })
-    setViewingTaskIndex(null)
+    setViewingTask(null)
   }
 
-  // 從詳情中跳過單一任務（永久略過，從列表移除）
-  const skipSingleTask = (index: number) => {
-    const task = pendingTasks[index]
+  // 從詳情中跳過單一任務
+  const skipSingleTask = (groupId: string, taskIndex: number) => {
+    const group = pendingTaskGroups.find(g => g.id === groupId)
+    if (!group) return
+
+    const task = group.tasks[taskIndex]
     recordNegativeExample(
       task as unknown as Record<string, unknown>,
       'skipped',
-      lastInputContext.slice(0, 500)
+      group.sourceContext?.slice(0, 500)
     ).catch(console.error)
 
     // 記錄到已處理歷史
-    addProcessedTaskGroup([{ ...task, status: 'skipped' }], lastInputContext.slice(0, 500))
+    addProcessedTaskGroup([{ ...task, status: 'skipped' }], group.sourceContext)
 
-    // 從 pendingTasks 移除該任務
-    const remainingTasks = pendingTasks.filter((_, i) => i !== index)
-    setPendingTasks(remainingTasks)
+    // 從群組中移除該任務
+    const remainingTasks = group.tasks.filter((_, i) => i !== taskIndex)
+    updatePendingTaskGroup(groupId, remainingTasks)
 
-    // 更新選中狀態（索引會改變，需要重新計算）
-    setSelectedTasks(prev => {
-      const next = new Set<number>()
-      prev.forEach(i => {
-        if (i < index) next.add(i)
-        else if (i > index) next.add(i - 1)
-      })
-      return next
-    })
-    setViewingTaskIndex(null)
+    setViewingTask(null)
   }
 
-  // 確認加入選中的任務（只處理選中的，保留未選中的）
-  const handleConfirmTasks = async () => {
-    if (isSubmitting) return // 防止重複點擊
+  // 確認加入選中的任務（針對單一群組）
+  const handleConfirmGroupTasks = async (groupId: string) => {
+    if (isSubmitting) return
     setIsSubmitting(true)
 
+    const group = pendingTaskGroups.find(g => g.id === groupId)
+    if (!group) {
+      setIsSubmitting(false)
+      return
+    }
+
+    const groupSelections = selectedTasks.get(groupId) || new Set()
+
     try {
-      // 只處理選中的任務
       const processedTasks: ProcessedTask[] = []
       const confirmedTasks: Record<string, unknown>[] = []
-      const remainingTasks: typeof pendingTasks = []
+      const remainingTasks: ExtractedTask[] = []
 
-      for (let index = 0; index < pendingTasks.length; index++) {
-        const task = pendingTasks[index]
-        const isSelected = selectedTasks.has(index)
+      for (let index = 0; index < group.tasks.length; index++) {
+        const task = group.tasks[index]
+        const isSelected = groupSelections.has(index)
 
         if (isSelected) {
-          // 選中的任務：加入到 Supabase
           try {
             await addTaskToSupabase({
               title: task.title,
@@ -271,42 +366,30 @@ export default function ChatWindow() {
           recordPositiveExample(
             task as unknown as Record<string, unknown>,
             undefined,
-            lastInputContext.slice(0, 500)
+            group.sourceContext?.slice(0, 500)
           ).catch(console.error)
           confirmedTasks.push(task as unknown as Record<string, unknown>)
-
-          // 加入已處理歷史（只記錄選中的）
-          processedTasks.push({
-            ...task,
-            status: 'added',
-          })
+          processedTasks.push({ ...task, status: 'added' })
         } else {
-          // 未選中的任務：保留在 pendingTasks 中
           remainingTasks.push(task)
         }
       }
 
-      // 保存選中任務到歷史記錄
       if (processedTasks.length > 0) {
-        addProcessedTaskGroup(processedTasks, lastInputContext.slice(0, 500))
+        addProcessedTaskGroup(processedTasks, group.sourceContext)
       }
 
-      // Few-shot Learning：只記錄選中的任務
-      if (lastInputContext.length > 100 && confirmedTasks.length > 0) {
+      // Few-shot Learning
+      if (group.sourceContext && group.sourceContext.length > 100 && confirmedTasks.length > 0) {
         try {
-          // 建立對話學習記錄
           const learning = await conversationLearningsApi.create({
-            input_content: lastInputContext,
+            input_content: group.sourceContext,
             input_type: 'transcript',
           })
-
-          // 更新 AI 回應和用戶回饋
           await conversationLearningsApi.updateAIResponse(learning.id, {
             ai_response: { type: 'tasks_extracted' },
             extracted_tasks: confirmedTasks,
           })
-
-          // 記錄學習回饋（只有確認的，沒有拒絕的）
           await learnFromTaskFeedback({
             conversationLearningId: learning.id,
             extractedTasks: confirmedTasks,
@@ -318,42 +401,43 @@ export default function ChatWindow() {
         }
       }
 
-      // 更新 pendingTasks（保留未選中的）
-      setPendingTasks(remainingTasks)
-      setSelectedTasks(new Set())
-      setViewingTaskIndex(null)
+      // 更新群組中剩餘的任務
+      updatePendingTaskGroup(groupId, remainingTasks)
+      setSelectedTasks(prev => {
+        const next = new Map(prev)
+        next.delete(groupId)
+        return next
+      })
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  // 取消全部
-  const handleCancelTasks = () => {
-    // 建立已處理任務列表（全部標記為略過）
-    const processedTasks: ProcessedTask[] = pendingTasks.map((task) => {
+  // 取消群組全部任務
+  const handleCancelGroupTasks = (groupId: string) => {
+    const group = pendingTaskGroups.find(g => g.id === groupId)
+    if (!group) return
+
+    const processedTasks: ProcessedTask[] = group.tasks.map((task) => {
       recordNegativeExample(
         task as unknown as Record<string, unknown>,
         'cancelled_all',
-        lastInputContext.slice(0, 500)
+        group.sourceContext?.slice(0, 500)
       ).catch(console.error)
-
-      return {
-        ...task,
-        status: 'skipped' as const,
-      }
+      return { ...task, status: 'skipped' as const }
     })
 
-    // 保存到歷史記錄
-    addProcessedTaskGroup(processedTasks, lastInputContext.slice(0, 500))
-
-    clearPendingTasks()
-    setSelectedTasks(new Set())
-    setViewingTaskIndex(null)
+    addProcessedTaskGroup(processedTasks, group.sourceContext)
+    removePendingTaskGroup(groupId)
+    setSelectedTasks(prev => {
+      const next = new Map(prev)
+      next.delete(groupId)
+      return next
+    })
   }
 
-  // 當前查看的任務
-  const viewingTask = viewingTaskIndex !== null ? pendingTasks[viewingTaskIndex] : null
-  const parsedDescription = viewingTask ? parseDescription(viewingTask.description || '') : null
+  // 當前查看任務的解析內容
+  const parsedDescription = currentViewingTask ? parseDescription(currentViewingTask.description || '') : null
 
   return (
     <div
@@ -380,9 +464,268 @@ export default function ChatWindow() {
           </div>
         ) : (
           <>
-            {messages.map((message: Message) => (
-              <MessageBubble key={message.id} message={message} />
-            ))}
+            {/* 按時間順序顯示訊息、已處理任務、待確認任務 */}
+            {timeline.map((item) => {
+              if (item.type === 'message') {
+                return <MessageBubble key={item.data.id} message={item.data} />
+              } else if (item.type === 'processedGroup') {
+                // 已處理任務群組
+                const group = item.data
+                return (
+                  <div key={group.id} className="py-2">
+                    <Card className="p-4 border border-muted bg-muted/30 max-w-3xl mx-auto">
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="text-muted-foreground">📋</span>
+                        <h3 className="font-medium text-sm text-muted-foreground">
+                          萃取了 {group.tasks.length} 個任務
+                          <span className="ml-2 text-xs">
+                            （{group.tasks.filter(t => t.status === 'added').length} 個已加入）
+                          </span>
+                        </h3>
+                      </div>
+
+                      <div className="space-y-2">
+                        {group.tasks.map((task, taskIndex) => (
+                          <div
+                            key={taskIndex}
+                            className={`flex items-start gap-3 p-2 rounded-lg border ${
+                              task.status === 'added'
+                                ? 'bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-800'
+                                : 'bg-gray-50 border-gray-200 dark:bg-gray-900/50 dark:border-gray-700 opacity-60'
+                            }`}
+                          >
+                            <div className="mt-0.5 shrink-0">
+                              {task.status === 'added' ? (
+                                <Check className="h-4 w-4 text-green-600" />
+                              ) : (
+                                <X className="h-4 w-4 text-gray-400" />
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-sm ${task.status === 'skipped' ? 'line-through text-muted-foreground' : ''}`}>
+                                {task.title}
+                              </p>
+                              <div className="flex gap-1.5 mt-1 flex-wrap">
+                                {task.status === 'added' && (
+                                  <Badge variant="outline" className="text-xs py-0 bg-green-100 text-green-700 border-green-300">已加入</Badge>
+                                )}
+                                {task.status === 'skipped' && (
+                                  <Badge variant="outline" className="text-xs py-0 bg-gray-100 text-gray-500 border-gray-300">已略過</Badge>
+                                )}
+                                {task.priority && task.status === 'added' && (
+                                  <Badge variant={task.priority === 'urgent' ? 'destructive' : task.priority === 'high' ? 'default' : 'secondary'} className="text-xs py-0">
+                                    {task.priority}
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                onClick={() => {
+                                  updateTaskFeedback(group.id, taskIndex, 'positive')
+                                  recordPositiveExample(task as unknown as Record<string, unknown>, undefined, group.sourceContext).catch(console.error)
+                                }}
+                                className={`p-1 rounded hover:bg-green-100 transition-colors ${task.feedback === 'positive' ? 'bg-green-100 text-green-600' : 'text-muted-foreground'}`}
+                                title="這個任務萃取得好"
+                              >
+                                <ThumbsUp className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  updateTaskFeedback(group.id, taskIndex, 'negative')
+                                  recordNegativeExample(task as unknown as Record<string, unknown>, 'user_feedback', group.sourceContext).catch(console.error)
+                                }}
+                                className={`p-1 rounded hover:bg-red-100 transition-colors ${task.feedback === 'negative' ? 'bg-red-100 text-red-600' : 'text-muted-foreground'}`}
+                                title="這個任務萃取得不好"
+                              >
+                                <ThumbsDown className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </Card>
+                  </div>
+                )
+              } else {
+                // 待確認任務群組（pendingGroup）
+                const group = item.data as PendingTaskGroup
+                const groupSelections = selectedTasks.get(group.id) || new Set()
+                return (
+                  <div key={group.id} className="py-4 px-4">
+                    <Card className="p-4 border-2 border-primary/50 bg-primary/5 max-w-3xl mx-auto">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <span>📋</span>
+                          <h3 className="font-medium">AI 建議的任務</h3>
+                          <Badge variant="secondary" className="text-xs">
+                            {group.tasks.length} 個
+                          </Badge>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggleAllInGroup(group.id, group.tasks.length)}
+                          className="text-xs"
+                        >
+                          {groupSelections.size === group.tasks.length ? '取消全選' : '全選'}
+                        </Button>
+                      </div>
+
+                      <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+                        {group.tasks.map((task, taskIndex) => {
+                          const isSelected = groupSelections.has(taskIndex)
+                          return (
+                            <div
+                              key={taskIndex}
+                              onClick={() => openTaskDetail(group.id, taskIndex)}
+                              className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                                isSelected
+                                  ? 'bg-primary/10 border-primary/30'
+                                  : 'bg-background hover:bg-muted/50 border-muted'
+                              }`}
+                            >
+                              <button
+                                onClick={(e) => toggleTask(group.id, taskIndex, e)}
+                                className="mt-0.5 shrink-0"
+                              >
+                                {isSelected ? (
+                                  <CheckSquare className="h-5 w-5 text-primary" />
+                                ) : (
+                                  <Square className="h-5 w-5 text-muted-foreground" />
+                                )}
+                              </button>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium">{task.title}</p>
+                                <div className="flex gap-1.5 mt-1 flex-wrap items-center">
+                                  {/* 負責人 Badge（可編輯） */}
+                                  {editingAssignee?.groupId === group.id && editingAssignee?.taskIndex === taskIndex ? (
+                                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                      <Input
+                                        value={assigneeInputValue}
+                                        onChange={(e) => setAssigneeInputValue(e.target.value)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            confirmAssigneeEdit(group.id, taskIndex)
+                                          } else if (e.key === 'Escape') {
+                                            cancelAssigneeEdit()
+                                          }
+                                        }}
+                                        className="h-6 w-24 text-xs px-2"
+                                        placeholder="輸入負責人"
+                                        autoFocus
+                                      />
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-6 w-6 p-0"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          confirmAssigneeEdit(group.id, taskIndex)
+                                        }}
+                                      >
+                                        <Check className="h-3 w-3 text-green-600" />
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-6 w-6 p-0"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          cancelAssigneeEdit()
+                                        }}
+                                      >
+                                        <X className="h-3 w-3 text-red-600" />
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <Popover>
+                                      <PopoverTrigger asChild>
+                                        <button
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="inline-flex items-center gap-1 text-xs py-0.5 px-2 rounded-full border bg-background hover:bg-muted transition-colors"
+                                        >
+                                          👤 {task.assignee || '未指定'}
+                                          <Pencil className="h-2.5 w-2.5 text-muted-foreground" />
+                                        </button>
+                                      </PopoverTrigger>
+                                      <PopoverContent className="w-48 p-2" align="start">
+                                        <div className="text-xs text-muted-foreground mb-2">修正負責人</div>
+                                        <div className="flex items-center gap-1">
+                                          <Input
+                                            value={assigneeInputValue || task.assignee || ''}
+                                            onChange={(e) => setAssigneeInputValue(e.target.value)}
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') {
+                                                confirmAssigneeEdit(group.id, taskIndex)
+                                              }
+                                            }}
+                                            className="h-7 text-xs"
+                                            placeholder="輸入負責人"
+                                            onFocus={() => setAssigneeInputValue(task.assignee || '')}
+                                          />
+                                          <Button
+                                            size="sm"
+                                            className="h-7 px-2"
+                                            onClick={() => confirmAssigneeEdit(group.id, taskIndex)}
+                                          >
+                                            確認
+                                          </Button>
+                                        </div>
+                                        <div className="text-xs text-muted-foreground mt-2">
+                                          修正後會記錄到 AI 學習系統
+                                        </div>
+                                      </PopoverContent>
+                                    </Popover>
+                                  )}
+                                  {task.priority && (
+                                    <Badge variant={task.priority === 'urgent' ? 'destructive' : task.priority === 'high' ? 'default' : 'secondary'} className="text-xs py-0">
+                                      {task.priority}
+                                    </Badge>
+                                  )}
+                                  {task.group && (
+                                    <Badge variant="outline" className="text-xs py-0 bg-blue-50 text-blue-700 border-blue-200">
+                                      {task.group}
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                              <Eye className="h-4 w-4 text-muted-foreground shrink-0 mt-1" />
+                            </div>
+                          )
+                        })}
+                      </div>
+
+                      <div className="flex gap-2 mt-4 pt-3 border-t">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleCancelGroupTasks(group.id)}
+                          disabled={isSubmitting}
+                          className="flex-1"
+                        >
+                          <X className="h-4 w-4 mr-1" />
+                          全部略過
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => handleConfirmGroupTasks(group.id)}
+                          disabled={isSubmitting || groupSelections.size === 0}
+                          className="flex-1"
+                        >
+                          {isSubmitting ? (
+                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                          ) : (
+                            <Check className="h-4 w-4 mr-1" />
+                          )}
+                          確認加入 ({groupSelections.size})
+                        </Button>
+                      </div>
+                    </Card>
+                  </div>
+                )
+              }
+            })}
 
             {/* Streaming 內容顯示 */}
             {streamingContent && (
@@ -423,342 +766,145 @@ export default function ChatWindow() {
                 </div>
               </div>
             )}
-
-            {/* 已處理任務歷史記錄 */}
-            {processedTaskGroups.map((group) => (
-              <div key={group.id} className="py-2">
-                <Card className="p-4 border border-muted bg-muted/30 max-w-3xl mx-auto">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-muted-foreground">📋</span>
-                    <h3 className="font-medium text-sm text-muted-foreground">
-                      萃取了 {group.tasks.length} 個任務
-                      <span className="ml-2 text-xs">
-                        （{group.tasks.filter(t => t.status === 'added').length} 個已加入）
-                      </span>
-                    </h3>
-                  </div>
-
-                  <div className="space-y-2">
-                    {group.tasks.map((task, taskIndex) => (
-                      <div
-                        key={taskIndex}
-                        className={`flex items-start gap-3 p-2 rounded-lg border ${
-                          task.status === 'added'
-                            ? 'bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-800'
-                            : 'bg-gray-50 border-gray-200 dark:bg-gray-900/50 dark:border-gray-700 opacity-60'
-                        }`}
-                      >
-                        {/* 狀態圖示 */}
-                        <div className="mt-0.5 shrink-0">
-                          {task.status === 'added' ? (
-                            <Check className="h-4 w-4 text-green-600" />
-                          ) : (
-                            <X className="h-4 w-4 text-gray-400" />
-                          )}
-                        </div>
-
-                        {/* 任務內容 */}
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-sm ${task.status === 'skipped' ? 'line-through text-muted-foreground' : ''}`}>
-                            {task.title}
-                          </p>
-                          <div className="flex gap-1.5 mt-1 flex-wrap">
-                            {task.status === 'added' && (
-                              <Badge variant="outline" className="text-xs py-0 bg-green-100 text-green-700 border-green-300">
-                                已加入
-                              </Badge>
-                            )}
-                            {task.status === 'skipped' && (
-                              <Badge variant="outline" className="text-xs py-0 bg-gray-100 text-gray-500 border-gray-300">
-                                已略過
-                              </Badge>
-                            )}
-                            {task.priority && task.status === 'added' && (
-                              <Badge
-                                variant={
-                                  task.priority === 'urgent'
-                                    ? 'destructive'
-                                    : task.priority === 'high'
-                                    ? 'default'
-                                    : 'secondary'
-                                }
-                                className="text-xs py-0"
-                              >
-                                {task.priority}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* 👍👎 回饋按鈕 */}
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            onClick={() => {
-                              updateTaskFeedback(group.id, taskIndex, 'positive')
-                              recordPositiveExample(
-                                task as unknown as Record<string, unknown>,
-                                undefined,
-                                group.sourceContext
-                              ).catch(console.error)
-                            }}
-                            className={`p-1 rounded hover:bg-green-100 transition-colors ${
-                              task.feedback === 'positive' ? 'bg-green-100 text-green-600' : 'text-muted-foreground'
-                            }`}
-                            title="這個任務萃取得好"
-                          >
-                            <ThumbsUp className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => {
-                              updateTaskFeedback(group.id, taskIndex, 'negative')
-                              recordNegativeExample(
-                                task as unknown as Record<string, unknown>,
-                                'user_feedback',
-                                group.sourceContext
-                              ).catch(console.error)
-                            }}
-                            className={`p-1 rounded hover:bg-red-100 transition-colors ${
-                              task.feedback === 'negative' ? 'bg-red-100 text-red-600' : 'text-muted-foreground'
-                            }`}
-                            title="這個任務萃取得不好"
-                          >
-                            <ThumbsDown className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              </div>
-            ))}
           </>
         )}
 
-        {/* 任務確認卡片 */}
-        {pendingTasks.length > 0 && (
-          <div className="py-4 px-4">
-          <Card className="p-4 border-2 border-primary/50 bg-primary/5 max-w-3xl mx-auto">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-lg flex items-center gap-2">
-                📋 萃取了 {pendingTasks.length} 個任務
-              </h3>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={toggleAll}
-              >
-                {selectedTasks.size === pendingTasks.length ? '取消全選' : '全選'}
-              </Button>
-            </div>
-
-            <p className="text-sm text-muted-foreground mb-3">
-              點擊任務查看詳情，或勾選後批次加入
-            </p>
-
-            <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
-              {pendingTasks.map((task, index) => (
-                <div
-                  key={index}
-                  onClick={() => openTaskDetail(index)}
-                  className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors border ${
-                    selectedTasks.has(index)
-                      ? 'bg-primary/10 border-primary/30'
-                      : 'bg-background hover:bg-muted/50 border-border'
-                  }`}
-                >
-                  {/* 勾選框 */}
-                  <div
-                    className="mt-0.5 shrink-0"
-                    onClick={(e) => toggleTask(index, e)}
-                  >
-                    {selectedTasks.has(index) ? (
-                      <CheckSquare className="h-5 w-5 text-primary" />
-                    ) : (
-                      <Square className="h-5 w-5 text-muted-foreground hover:text-primary" />
-                    )}
-                  </div>
-
-                  {/* 任務內容 */}
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm">{task.title}</p>
-                    <div className="flex gap-1.5 mt-1.5 flex-wrap">
-                      {task.due_date && (
-                        <Badge variant="outline" className="text-xs py-0">
-                          <Clock className="h-3 w-3 mr-1" />
-                          {task.due_date}
-                        </Badge>
-                      )}
-                      {task.assignee && (
-                        <Badge variant="outline" className="text-xs py-0">
-                          @{task.assignee}
-                        </Badge>
-                      )}
-                      {task.priority && (
-                        <Badge
-                          variant={
-                            task.priority === 'urgent'
-                              ? 'destructive'
-                              : task.priority === 'high'
-                              ? 'default'
-                              : 'secondary'
-                          }
-                          className="text-xs py-0"
-                        >
-                          {task.priority}
-                        </Badge>
-                      )}
-                      {task.project && (
-                        <Badge variant="outline" className="text-xs py-0">
-                          {task.project}
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* 查看詳情按鈕 */}
-                  <Eye className="h-4 w-4 text-muted-foreground shrink-0 mt-1" />
-                </div>
-              ))}
-            </div>
-
-            {/* 底部按鈕 */}
-            <div className="flex justify-between items-center gap-2 mt-4 pt-3 border-t">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleCancelTasks}
-                className="text-muted-foreground"
-              >
-                全部略過
-              </Button>
-              <Button
-                onClick={handleConfirmTasks}
-                disabled={selectedTasks.size === 0 || isSubmitting}
-                size="sm"
-              >
-                {isSubmitting ? (
-                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                ) : (
-                  <Check className="h-4 w-4 mr-1" />
-                )}
-                {isSubmitting ? '新增中...' : `加入 ${selectedTasks.size} 個任務`}
-              </Button>
-            </div>
-          </Card>
-          </div>
-        )}
-
         {/* 任務詳情 Dialog */}
-        <Dialog open={viewingTaskIndex !== null} onOpenChange={() => setViewingTaskIndex(null)}>
-          <DialogContent className="max-w-lg max-h-[80vh] overflow-hidden flex flex-col">
-            <DialogHeader>
+        <Dialog open={viewingTask !== null} onOpenChange={() => setViewingTask(null)}>
+          <DialogContent className="max-w-2xl h-[85vh] overflow-hidden flex flex-col p-0">
+            <DialogHeader className="px-6 pt-6 pb-4 shrink-0">
               <DialogTitle className="text-lg pr-6">
-                {viewingTask?.title}
+                {currentViewingTask?.title}
               </DialogTitle>
             </DialogHeader>
 
-            {viewingTask && (
+            {currentViewingTask && (
               <>
                 {/* 任務基本資訊 */}
-                <div className="flex flex-wrap gap-2 pb-3 border-b">
-                  {viewingTask.priority && (
+                <div className="flex flex-wrap gap-2 px-6 pb-4 border-b shrink-0">
+                  {currentViewingTask.priority && (
                     <Badge
                       variant={
-                        viewingTask.priority === 'urgent'
+                        currentViewingTask.priority === 'urgent'
                           ? 'destructive'
-                          : viewingTask.priority === 'high'
+                          : currentViewingTask.priority === 'high'
                           ? 'default'
                           : 'secondary'
                       }
                     >
-                      {viewingTask.priority === 'urgent' ? '緊急' :
-                       viewingTask.priority === 'high' ? '高優先' :
-                       viewingTask.priority === 'medium' ? '中優先' : '低優先'}
+                      {currentViewingTask.priority === 'urgent' ? '緊急' :
+                       currentViewingTask.priority === 'high' ? '高優先' :
+                       currentViewingTask.priority === 'medium' ? '中優先' : '低優先'}
                     </Badge>
                   )}
-                  {viewingTask.assignee && (
-                    <Badge variant="outline">負責人：{viewingTask.assignee}</Badge>
-                  )}
-                  {viewingTask.due_date && (
+                  {/* 負責人（可編輯） */}
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button className="inline-flex items-center gap-1 text-xs py-1 px-2.5 rounded-full border bg-background hover:bg-muted transition-colors">
+                        負責人：{currentViewingTask.assignee || '未指定'}
+                        <Pencil className="h-3 w-3 text-muted-foreground" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-52 p-3" align="start">
+                      <div className="text-xs text-muted-foreground mb-2">修正負責人</div>
+                      <div className="flex items-center gap-1">
+                        <Input
+                          value={assigneeInputValue || currentViewingTask.assignee || ''}
+                          onChange={(e) => setAssigneeInputValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && viewingTask) {
+                              confirmAssigneeEdit(viewingTask.groupId, viewingTask.taskIndex)
+                            }
+                          }}
+                          className="h-8 text-sm"
+                          placeholder="輸入負責人"
+                          onFocus={() => setAssigneeInputValue(currentViewingTask.assignee || '')}
+                        />
+                        <Button
+                          size="sm"
+                          className="h-8 px-3"
+                          onClick={() => viewingTask && confirmAssigneeEdit(viewingTask.groupId, viewingTask.taskIndex)}
+                        >
+                          確認
+                        </Button>
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-2">
+                        修正後會記錄到 AI 學習系統
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                  {currentViewingTask.due_date && (
                     <Badge variant="outline">
                       <Clock className="h-3 w-3 mr-1" />
-                      {viewingTask.due_date}
+                      {currentViewingTask.due_date}
                     </Badge>
                   )}
-                  {viewingTask.project && (
-                    <Badge variant="outline">專案：{viewingTask.project}</Badge>
+                  {currentViewingTask.project && (
+                    <Badge variant="outline">專案：{currentViewingTask.project}</Badge>
+                  )}
+                  {currentViewingTask.group && (
+                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                      組別：{currentViewingTask.group}
+                    </Badge>
                   )}
                 </div>
 
-                {/* 詳細內容 */}
-                <ScrollArea className="flex-1 pr-4">
-                  <div className="space-y-4 py-2">
-                    {/* 任務摘要 */}
+                {/* 詳細內容 - 可滾動區域 */}
+                <div className="flex-1 overflow-y-auto px-6 py-4">
+                  <div className="space-y-5">
                     {parsedDescription?.summary && (
-                      <div>
-                        <h4 className="font-semibold text-sm mb-1 text-primary">任務摘要</h4>
-                        <p className="text-sm text-muted-foreground leading-relaxed">
-                          {parsedDescription.summary}
-                        </p>
+                      <div className="bg-blue-50/50 dark:bg-blue-950/20 rounded-lg p-4 border-l-4 border-blue-400">
+                        <h4 className="font-semibold text-sm mb-2 text-blue-700 dark:text-blue-400">任務摘要</h4>
+                        <p className="text-sm leading-relaxed">{parsedDescription.summary}</p>
                       </div>
                     )}
-
-                    {/* 執行細節 */}
                     {parsedDescription?.steps && parsedDescription.steps.length > 0 && (
-                      <div>
-                        <h4 className="font-semibold text-sm mb-1 text-primary">執行細節</h4>
-                        <ul className="text-sm text-muted-foreground space-y-1">
+                      <div className="bg-green-50/50 dark:bg-green-950/20 rounded-lg p-4 border-l-4 border-green-400">
+                        <h4 className="font-semibold text-sm mb-2 text-green-700 dark:text-green-400">執行細節</h4>
+                        <ul className="text-sm space-y-2">
                           {parsedDescription.steps.map((step, i) => (
-                            <li key={i} className="leading-relaxed">{step}</li>
+                            <li key={i} className="leading-relaxed flex items-start gap-2">
+                              <span className="text-green-600 shrink-0">•</span>
+                              <span>{step.replace(/^\d+[\.\、]\s*/, '')}</span>
+                            </li>
                           ))}
                         </ul>
                       </div>
                     )}
-
-                    {/* 會議脈絡 */}
                     {parsedDescription?.context && (
-                      <div>
-                        <h4 className="font-semibold text-sm mb-1 text-primary">會議脈絡</h4>
-                        <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
-                          {parsedDescription.context}
-                        </p>
+                      <div className="bg-purple-50/50 dark:bg-purple-950/20 rounded-lg p-4 border-l-4 border-purple-400">
+                        <h4 className="font-semibold text-sm mb-2 text-purple-700 dark:text-purple-400">會議脈絡</h4>
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap">{parsedDescription.context}</p>
                       </div>
                     )}
-
-                    {/* 原文引用 */}
                     {parsedDescription?.quotes && parsedDescription.quotes.length > 0 && (
-                      <div>
-                        <h4 className="font-semibold text-sm mb-1 text-primary">原文引用</h4>
-                        <div className="space-y-2">
+                      <div className="bg-amber-50/50 dark:bg-amber-950/20 rounded-lg p-4 border-l-4 border-amber-400">
+                        <h4 className="font-semibold text-sm mb-2 text-amber-700 dark:text-amber-400">原文引用</h4>
+                        <div className="space-y-3">
                           {parsedDescription.quotes.map((quote, i) => (
-                            <div
-                              key={i}
-                              className="text-sm text-muted-foreground pl-3 border-l-2 border-primary/30 leading-relaxed"
-                            >
-                              {quote}
+                            <div key={i} className="text-sm italic pl-3 border-l-2 border-amber-300 leading-relaxed">
+                              「{quote.replace(/^[「」]/g, '').replace(/[」]$/g, '')}」
                             </div>
                           ))}
                         </div>
                       </div>
                     )}
-
-                    {/* 如果沒有結構化內容，顯示原始 description */}
                     {!parsedDescription?.summary && !parsedDescription?.steps?.length &&
                      !parsedDescription?.context && !parsedDescription?.quotes?.length &&
-                     viewingTask.description && (
+                     currentViewingTask.description && (
                       <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                        {viewingTask.description}
+                        {currentViewingTask.description}
                       </p>
                     )}
                   </div>
-                </ScrollArea>
+                </div>
               </>
             )}
 
-            <DialogFooter className="flex-row gap-2 pt-3 border-t">
+            <DialogFooter className="flex-row gap-2 px-6 py-4 border-t shrink-0 bg-background">
               <Button
                 variant="outline"
-                onClick={() => viewingTaskIndex !== null && skipSingleTask(viewingTaskIndex)}
+                onClick={() => viewingTask && skipSingleTask(viewingTask.groupId, viewingTask.taskIndex)}
                 className="flex-1"
                 disabled={isSubmitting}
               >
@@ -766,7 +912,7 @@ export default function ChatWindow() {
                 跳過
               </Button>
               <Button
-                onClick={() => viewingTaskIndex !== null && addSingleTask(viewingTaskIndex)}
+                onClick={() => viewingTask && addSingleTask(viewingTask.groupId, viewingTask.taskIndex)}
                 className="flex-1"
                 disabled={isSubmitting}
               >

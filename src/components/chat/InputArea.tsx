@@ -24,8 +24,8 @@ export default function InputArea() {
     addApiUsage,
     appendStreamingContent,
     clearStreamingContent,
-    setPendingTasks,
-    pendingTasks,
+    addPendingTaskGroup,
+    pendingTaskGroups,
     processedTaskGroups,
     setLastInputContext,
   } = useAppStore()
@@ -204,31 +204,47 @@ export default function InputArea() {
                 // 同步儲存到雲端
                 saveMessage(assistantMessageObj)
 
-                // 如果有萃取出的任務，設定為待確認（過濾重複）
+                // 如果有萃取出的任務，設定為待確認（過濾重複 + 相似任務合併）
                 if (parsed.type === 'tasks_extracted' && parsed.tasks && parsed.tasks.length > 0) {
-                  // 收集已處理過的任務標題（正規化後比對）
-                  const processedTitles = new Set<string>()
+                  // 收集已處理過的任務標題
+                  const processedTitles: string[] = []
                   processedTaskGroups.forEach(group => {
                     group.tasks.forEach(task => {
-                      processedTitles.add(task.title.trim().toLowerCase())
+                      processedTitles.push(task.title.trim().toLowerCase())
                     })
                   })
 
                   // 收集目前待確認列表中的任務標題
-                  const pendingTitles = new Set<string>()
-                  pendingTasks.forEach(task => {
-                    pendingTitles.add(task.title.trim().toLowerCase())
+                  const pendingTitles: string[] = []
+                  pendingTaskGroups.forEach(group => {
+                    group.tasks.forEach(task => {
+                      pendingTitles.push(task.title.trim().toLowerCase())
+                    })
                   })
 
-                  // 過濾掉已處理過或已在待確認列表中的任務
+                  const allExistingTitles = [...processedTitles, ...pendingTitles]
+
+                  // 相似度檢測函數（簡單版：共同關鍵字比例）
+                  const isSimilar = (title1: string, title2: string): boolean => {
+                    const words1 = title1.replace(/[，。、]/g, ' ').split(/\s+/).filter(w => w.length > 1)
+                    const words2 = title2.replace(/[，。、]/g, ' ').split(/\s+/).filter(w => w.length > 1)
+                    const commonWords = words1.filter(w => words2.some(w2 => w2.includes(w) || w.includes(w2)))
+                    return commonWords.length >= Math.min(words1.length, words2.length) * 0.5
+                  }
+
+                  // 過濾掉完全重複或相似的任務
                   const newTasks = (parsed.tasks as ExtractedTask[]).filter(task => {
                     const normalizedTitle = task.title.trim().toLowerCase()
-                    return !processedTitles.has(normalizedTitle) && !pendingTitles.has(normalizedTitle)
+                    // 檢查完全重複
+                    if (allExistingTitles.includes(normalizedTitle)) return false
+                    // 檢查相似（如「優化業務SOP」和「整理業務SOP」）
+                    const hasSimilar = allExistingTitles.some(existing => isSimilar(normalizedTitle, existing))
+                    return !hasSimilar
                   })
 
-                  // 合併現有 pending 任務和新任務
+                  // 新萃取的任務作為獨立群組加入（帶時間戳）
                   if (newTasks.length > 0) {
-                    setPendingTasks([...pendingTasks, ...newTasks])
+                    addPendingTaskGroup(newTasks, userMessage.slice(0, 500))
                   }
                 }
 
