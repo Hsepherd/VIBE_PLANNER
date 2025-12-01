@@ -127,6 +127,25 @@ description 欄位必須使用以下結構化格式，每個部分都要有：
    - 從逐字稿中複製 2-3 段相關原話
    - 格式：「【時間】講者：原話」
    - 絕對不可以省略這個區塊！
+
+## ⚠️⚠️⚠️ 截止日期處理（非常重要！）
+**絕對不要把截止日期寫在標題裡！必須放到 due_date 欄位！**
+
+⚠️ 現在是 ${today.year} 年！所有日期都必須使用 ${today.year} 年！
+❌ 絕對不要使用 2024 年！現在已經是 ${today.year} 年了！
+
+❌ 錯誤範例：
+- 標題：「12/15前完成課程腳本」→ 錯！日期不應該在標題裡
+- due_date: "2024-12-15" → 錯！年份必須是 ${today.year}
+
+✅ 正確範例：
+- 標題：「完成課程腳本」+ due_date: "${today.year}-12-15"
+- 標題：「提交報告」+ due_date: "${today.full}"
+
+**規則：**
+1. 標題只描述「做什麼」，不要包含「什麼時候」
+2. 任何時間資訊都要轉換成 ${today.year}-MM-DD 格式放到 due_date
+3. 如果用戶明確說了日期，必須填入 due_date，年份必須是 ${today.year}
 `
 }
 
@@ -366,9 +385,26 @@ export const getMeetingTranscriptPrompt = () => {
 
 **⚠️ 如果找不到相關原文，請從逐字稿中找出最接近的相關對話！絕對不可以留空！**
 
-### 6. due_date（截止日期）
+### 6. due_date（截止日期）⚠️⚠️⚠️ 非常重要！
 - 根據討論內容推斷，轉換為 YYYY-MM-DD
 - 如果沒有明確提及，填 null
+- **絕對不要把截止日期寫在標題裡！必須放到 due_date 欄位！**
+
+⚠️ 現在是 ${today.year} 年！所有日期都必須使用 ${today.year} 年！
+❌ 絕對不要使用 2024 年！現在已經是 ${today.year} 年了！
+
+**❌ 錯誤範例：**
+- 標題：「12/15前完成課程腳本」→ 錯！日期不應該在標題裡
+- due_date: "2024-12-15" → 錯！年份必須是 ${today.year}
+
+**✅ 正確範例：**
+- 標題：「完成課程腳本」+ due_date: "${today.year}-12-15"
+- 標題：「提交報告」+ due_date: "${today.full}"
+
+**規則：**
+1. 標題只描述「做什麼」，不要包含「什麼時候」
+2. 任何時間資訊都要轉換成 ${today.year}-MM-DD 格式放到 due_date
+3. 如果用戶明確說了日期，必須填入 due_date，年份必須是 ${today.year}
 
 ### 7. project（相關專案）
 - 如能判斷出相關專案／主題，填入
@@ -624,6 +660,112 @@ export async function chat(
   })
 
   return response.choices[0].message.content
+}
+
+// 生成行事曆上下文（供 AI 參考）
+export function generateCalendarContext(tasks: Array<{
+  id: string
+  title: string
+  description?: string
+  status: 'pending' | 'in_progress' | 'completed' | 'on_hold'
+  priority: 'low' | 'medium' | 'high' | 'urgent'
+  dueDate?: Date | string
+  assignee?: string
+  project?: string
+}>): string {
+  if (!tasks || tasks.length === 0) {
+    return ''
+  }
+
+  const today = getTodayDate()
+  const todayDate = new Date(today.full)
+
+  // 依日期分組任務
+  const tasksByDate: Record<string, typeof tasks> = {}
+  const overdueTasks: typeof tasks = []
+  const noDueDateTasks: typeof tasks = []
+
+  tasks.forEach(task => {
+    if (!task.dueDate) {
+      noDueDateTasks.push(task)
+      return
+    }
+
+    const dueDate = new Date(task.dueDate)
+    const dateKey = dueDate.toISOString().split('T')[0]
+
+    if (dueDate < todayDate && task.status !== 'completed') {
+      overdueTasks.push(task)
+    } else {
+      if (!tasksByDate[dateKey]) {
+        tasksByDate[dateKey] = []
+      }
+      tasksByDate[dateKey].push(task)
+    }
+  })
+
+  // 生成行事曆摘要
+  let context = `\n## 📅 目前的行事曆狀態（今天是 ${today.full}，星期${today.weekday}）\n\n`
+
+  // 逾期任務
+  if (overdueTasks.length > 0) {
+    context += `### ⚠️ 逾期任務（${overdueTasks.length} 項）\n`
+    overdueTasks.forEach(task => {
+      const dueStr = task.dueDate ? new Date(task.dueDate).toISOString().split('T')[0] : ''
+      context += `- [${task.status === 'completed' ? '✓' : '○'}] ${task.title}`
+      if (task.assignee) context += ` (@${task.assignee})`
+      if (dueStr) context += ` - 原截止：${dueStr}`
+      if (task.project) context += ` [${task.project}]`
+      context += '\n'
+    })
+    context += '\n'
+  }
+
+  // 依日期排序顯示未來 14 天的任務
+  const sortedDates = Object.keys(tasksByDate).sort()
+  const next14Days = sortedDates.filter(date => {
+    const d = new Date(date)
+    const diff = (d.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24)
+    return diff >= 0 && diff <= 14
+  })
+
+  if (next14Days.length > 0) {
+    context += `### 📋 未來兩週任務\n`
+    next14Days.forEach(date => {
+      const dateTasks = tasksByDate[date]
+      const d = new Date(date)
+      const dayDiff = Math.floor((d.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24))
+      const dayLabel = dayDiff === 0 ? '（今天）' : dayDiff === 1 ? '（明天）' : ''
+
+      context += `\n**${date}${dayLabel}** - ${dateTasks.length} 項任務\n`
+      dateTasks.forEach(task => {
+        const statusIcon = task.status === 'completed' ? '✓' : task.status === 'in_progress' ? '⏳' : '○'
+        context += `- [${statusIcon}] ${task.title}`
+        if (task.priority === 'urgent') context += ' 🔴'
+        else if (task.priority === 'high') context += ' 🟠'
+        if (task.assignee) context += ` (@${task.assignee})`
+        if (task.project) context += ` [${task.project}]`
+        context += '\n'
+      })
+    })
+  }
+
+  // 統計摘要
+  const pendingCount = tasks.filter(t => t.status === 'pending').length
+  const inProgressCount = tasks.filter(t => t.status === 'in_progress').length
+  const completedCount = tasks.filter(t => t.status === 'completed').length
+  const urgentCount = tasks.filter(t => t.priority === 'urgent' && t.status !== 'completed').length
+
+  context += `\n### 📊 任務統計\n`
+  context += `- 待處理：${pendingCount} 項\n`
+  context += `- 進行中：${inProgressCount} 項\n`
+  context += `- 已完成：${completedCount} 項\n`
+  if (urgentCount > 0) context += `- 緊急待處理：${urgentCount} 項\n`
+  if (overdueTasks.length > 0) context += `- 逾期未完成：${overdueTasks.length} 項\n`
+
+  context += `\n---\n\n當使用者詢問行程安排、任務調整、今天要做什麼等問題時，請參考以上行事曆資料提供建議。\n`
+
+  return context
 }
 
 // 解析 AI 回應

@@ -32,6 +32,23 @@ import { getGroups, addGroup, removeGroup, getGroupColor, GROUP_COLORS, type Gro
 import { format, isToday, isTomorrow, isThisWeek, isPast, addDays, startOfDay } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
 import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import {
   Check,
   CheckCircle2,
   Circle,
@@ -60,6 +77,7 @@ import {
   CheckSquare,
   Square,
   Edit3,
+  GripVertical,
 } from 'lucide-react'
 
 type SortMode = 'priority' | 'dueDate' | 'assignee' | 'tag' | 'group'
@@ -872,6 +890,7 @@ export default function TasksPage() {
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set())
   const [isSelectionMode, setIsSelectionMode] = useState(false)
   const [showBatchEditDialog, setShowBatchEditDialog] = useState(false)
+  const [lastSelectedTaskId, setLastSelectedTaskId] = useState<string | null>(null) // 用於 Shift 範圍選取
 
   // 團隊成員
   const [teamMembers, setTeamMembers] = useState<string[]>([])
@@ -1111,8 +1130,31 @@ export default function TasksPage() {
     await updateTask(id, updates)
   }, [updateTask])
 
-  // 批次選取功能
-  const toggleTaskSelection = useCallback((taskId: string) => {
+  // 批次選取功能（支援 Shift 範圍選取）
+  const toggleTaskSelection = useCallback((taskId: string, shiftKey: boolean = false) => {
+    // 取得目前顯示的任務列表（按照目前排序）
+    const taskIds = filteredTasks.map(t => t.id)
+
+    if (shiftKey && lastSelectedTaskId && lastSelectedTaskId !== taskId) {
+      // Shift+點擊：範圍選取
+      const lastIndex = taskIds.indexOf(lastSelectedTaskId)
+      const currentIndex = taskIds.indexOf(taskId)
+
+      if (lastIndex !== -1 && currentIndex !== -1) {
+        const start = Math.min(lastIndex, currentIndex)
+        const end = Math.max(lastIndex, currentIndex)
+        const rangeIds = taskIds.slice(start, end + 1)
+
+        setSelectedTaskIds(prev => {
+          const next = new Set(prev)
+          rangeIds.forEach(id => next.add(id))
+          return next
+        })
+        return
+      }
+    }
+
+    // 一般點擊：切換單一任務選取
     setSelectedTaskIds(prev => {
       const next = new Set(prev)
       if (next.has(taskId)) {
@@ -1122,7 +1164,8 @@ export default function TasksPage() {
       }
       return next
     })
-  }, [])
+    setLastSelectedTaskId(taskId)
+  }, [filteredTasks, lastSelectedTaskId])
 
   const selectAllTasks = useCallback(() => {
     setSelectedTaskIds(new Set(filteredTasks.map(t => t.id)))
@@ -1171,294 +1214,343 @@ export default function TasksPage() {
     setSelectedTaskIds(new Set())
   }, [selectedTaskIds, completeTask])
 
-  // 任務項目組件 - 卡片式設計，支援直接編輯
-  const TaskItem = ({ task }: { task: Task }) => {
+  // 狀態顏色對應
+  const statusColors: Record<string, { bg: string; border: string; text: string; dotBg: string }> = {
+    pending: { bg: 'bg-gray-50', border: 'border-gray-300', text: '未開始', dotBg: 'bg-gray-400' },
+    in_progress: { bg: 'bg-blue-50', border: 'border-blue-400', text: '進行中', dotBg: 'bg-blue-500' },
+    completed: { bg: 'bg-green-50', border: 'border-green-400', text: '已完成', dotBg: 'bg-green-500' },
+    on_hold: { bg: 'bg-amber-50', border: 'border-amber-400', text: '暫停', dotBg: 'bg-amber-500' },
+  }
+
+  // 欄位寬度狀態（可拖曳調整）
+  const [columnWidths, setColumnWidths] = useState({
+    assignee: 120,
+    startDate: 110,
+    dueDate: 110,
+    priority: 80,
+  })
+
+  // 拖曳調整欄位寬度
+  const [resizing, setResizing] = useState<string | null>(null)
+  const [resizeStartX, setResizeStartX] = useState(0)
+  const [resizeStartWidth, setResizeStartWidth] = useState(0)
+
+  const handleResizeStart = useCallback((column: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    setResizing(column)
+    setResizeStartX(e.clientX)
+    setResizeStartWidth(columnWidths[column as keyof typeof columnWidths])
+  }, [columnWidths])
+
+  useEffect(() => {
+    if (!resizing) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      // 向左拖曳縮小，向右拖曳放大（反轉方向）
+      const diff = resizeStartX - e.clientX
+      const newWidth = Math.max(70, Math.min(200, resizeStartWidth + diff))
+      setColumnWidths(prev => ({ ...prev, [resizing]: newWidth }))
+    }
+
+    const handleMouseUp = () => {
+      setResizing(null)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [resizing, resizeStartX, resizeStartWidth])
+
+  // 分組收合狀態
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+
+  const toggleGroupCollapse = useCallback((groupKey: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(groupKey)) {
+        next.delete(groupKey)
+      } else {
+        next.add(groupKey)
+      }
+      return next
+    })
+  }, [])
+
+  // dnd-kit sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
+
+  // 任務順序狀態（本地排序用）
+  const [taskOrder, setTaskOrder] = useState<string[]>([])
+
+  // 當任務變更時同步順序
+  useEffect(() => {
+    const currentIds = tasks.map(t => t.id)
+    setTaskOrder(prev => {
+      // 保留已存在的順序，新增的放最後
+      const existingOrder = prev.filter(id => currentIds.includes(id))
+      const newIds = currentIds.filter(id => !prev.includes(id))
+      return [...existingOrder, ...newIds]
+    })
+  }, [tasks])
+
+  // 拖曳結束處理 - 實際更新順序
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event
+    if (over && active.id !== over.id) {
+      setTaskOrder(prev => {
+        const oldIndex = prev.indexOf(active.id as string)
+        const newIndex = prev.indexOf(over.id as string)
+        return arrayMove(prev, oldIndex, newIndex)
+      })
+    }
+  }, [])
+
+  // 可拖曳的任務項目組件 - 單行設計
+  const SortableTaskItem = ({ task }: { task: Task }) => {
+    const {
+      attributes,
+      listeners,
+      setNodeRef,
+      transform,
+      transition,
+      isDragging,
+    } = useSortable({ id: task.id })
+
+    const style = {
+      transform: CSS.Transform.toString(transform),
+      transition,
+      opacity: isDragging ? 0.5 : 1,
+      zIndex: isDragging ? 1000 : 'auto',
+    }
+
     const hasDescription = task.description && task.description.trim().length > 0
+    const [startDatePickerOpen, setStartDatePickerOpen] = useState(false)
     const [datePickerOpen, setDatePickerOpen] = useState(false)
     const [assigneeOpen, setAssigneeOpen] = useState(false)
     const [groupOpen, setGroupOpen] = useState(false)
     const [tagOpen, setTagOpen] = useState(false)
     const [priorityOpen, setPriorityOpen] = useState(false)
+    const [statusOpen, setStatusOpen] = useState(false)
     const isSelected = selectedTaskIds.has(task.id)
+
+    const currentStatus = statusColors[task.status] || statusColors.pending
+
+    // 日期顯示格式化（全部顯示年份）
+    const formatDueDate = (date: Date) => {
+      if (isToday(date)) return '今天'
+      if (isTomorrow(date)) return '明天'
+      return format(date, 'yyyy/M/d', { locale: zhTW })
+    }
+
+    // 日期是否過期
+    const isOverdue = task.dueDate && isPast(startOfDay(new Date(task.dueDate))) && !isToday(new Date(task.dueDate)) && task.status !== 'completed'
 
     return (
       <div
-        className={`bg-white rounded-lg border transition-all hover:shadow-sm ${
+        ref={setNodeRef}
+        style={style as React.CSSProperties}
+        className={`group flex items-center bg-white border-b border-gray-100 hover:bg-blue-50/40 transition-colors ${
           task.status === 'completed' ? 'opacity-60' : ''
-        } ${isSelected ? 'ring-2 ring-primary ring-offset-1' : ''}`}
+        } ${isSelected ? 'bg-blue-50/60' : ''} ${isDragging ? 'shadow-lg bg-white rounded-lg border border-blue-200' : ''}`}
       >
-        {/* 第一行：選取框/完成框 + 標題 + 詳情按鈕 + 刪除 */}
-        <div className="flex items-center gap-3 px-4 pt-3 pb-2">
-          {/* 選取模式：顯示選取框 */}
-          {isSelectionMode ? (
-            <button
-              className="h-5 w-5 shrink-0 flex items-center justify-center"
-              onClick={(e) => {
-                e.stopPropagation()
-                toggleTaskSelection(task.id)
-              }}
-            >
-              {isSelected ? (
-                <CheckSquare className="h-5 w-5 text-primary" />
-              ) : (
-                <Square className="h-5 w-5 text-muted-foreground hover:text-primary" />
-              )}
-            </button>
-          ) : (
-            /* 正常模式：顯示完成框 */
-            <button
-              className={`h-5 w-5 shrink-0 flex items-center justify-center rounded-full border-2 transition-colors ${
-                task.status === 'completed'
-                  ? 'bg-green-500 border-green-500 text-white'
-                  : 'border-gray-300 hover:border-gray-400'
-              }`}
-              onClick={async (e) => {
-                e.stopPropagation()
-                if (task.status === 'completed') {
-                  await updateTask(task.id, { status: 'pending', completedAt: undefined })
-                } else {
-                  await completeTask(task.id)
-                }
-              }}
-            >
-              {task.status === 'completed' && (
-                <Check className="h-3 w-3" />
-              )}
-            </button>
-          )}
+        {/* 拖曳手柄 - 固定寬度 */}
+        <div
+          {...attributes}
+          {...listeners}
+          className="flex items-center justify-center w-10 h-12 cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+        >
+          <GripVertical className="h-4 w-4" />
+        </div>
 
-          {/* 標題 */}
-          <div className="flex-1 min-w-0 flex items-center gap-2">
-            <span className={`text-sm font-medium truncate ${task.status === 'completed' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
-              {task.title}
-            </span>
-            {hasDescription && (
-              <button
-                onClick={() => setSelectedTask(task)}
-                className="shrink-0 text-muted-foreground hover:text-foreground"
-                title="查看詳情"
-              >
-                <FileText className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-
-          {/* 刪除按鈕 */}
+        {/* 選取框 - 固定寬度（支援 Shift+點擊 範圍選取）*/}
+        <div className="w-8 h-12 flex items-center justify-center shrink-0">
           <button
-            className="p-1.5 rounded-md text-muted-foreground/50 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0"
-            onClick={async (e) => {
-              e.stopPropagation()
-              await deleteTask(task.id)
-            }}
+            className={`w-4 h-4 flex items-center justify-center transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+            onClick={(e) => { e.stopPropagation(); toggleTaskSelection(task.id, e.shiftKey) }}
           >
-            <Trash2 className="h-4 w-4" />
+            {isSelected ? <CheckSquare className="h-4 w-4 text-blue-600" /> : <Square className="h-4 w-4 text-gray-400 hover:text-blue-600" />}
           </button>
         </div>
 
-        {/* 第二行：可編輯的欄位 */}
-        <div className="flex items-center gap-2 px-4 pb-3 flex-wrap">
-          {/* 日期選擇器 */}
-          <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
-            <PopoverTrigger asChild>
-              <button
-                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border transition-colors hover:bg-gray-50 ${
-                  task.dueDate ? 'border-gray-200 text-foreground' : 'border-dashed border-gray-300 text-muted-foreground'
-                }`}
-              >
-                <Calendar className="h-3 w-3" />
-                {task.dueDate ? format(new Date(task.dueDate), 'M/d', { locale: zhTW }) : '日期'}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <CalendarComponent
-                mode="single"
-                selected={task.dueDate ? new Date(task.dueDate) : undefined}
-                onSelect={async (date) => {
-                  await updateTask(task.id, { dueDate: date || undefined })
-                  setDatePickerOpen(false)
-                }}
-                locale={zhTW}
-              />
-              {task.dueDate && (
-                <div className="p-2 border-t">
-                  <button
-                    className="w-full text-xs text-muted-foreground hover:text-red-500"
-                    onClick={async () => {
-                      await updateTask(task.id, { dueDate: undefined })
-                      setDatePickerOpen(false)
-                    }}
-                  >
-                    清除日期
-                  </button>
-                </div>
-              )}
-            </PopoverContent>
-          </Popover>
+        {/* 狀態指示點 - 固定寬度 */}
+        <div className="w-8 h-12 flex items-center justify-center shrink-0">
+          <DropdownMenu open={statusOpen} onOpenChange={setStatusOpen}>
+            <DropdownMenuTrigger asChild>
+              <button className={`w-3.5 h-3.5 rounded-full transition-all hover:scale-125 ring-2 ring-white shadow-sm ${currentStatus.dotBg}`} title={currentStatus.text} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-28">
+              <DropdownMenuItem onClick={() => updateTask(task.id, { status: 'pending', completedAt: undefined })} className="gap-2 text-xs">
+                <span className="w-2.5 h-2.5 rounded-full bg-gray-400 shrink-0" />未開始
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => updateTask(task.id, { status: 'in_progress', completedAt: undefined })} className="gap-2 text-xs">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0" />進行中
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => completeTask(task.id)} className="gap-2 text-xs">
+                <span className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />已完成
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => updateTask(task.id, { status: 'on_hold', completedAt: undefined })} className="gap-2 text-xs">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" />暫停
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
 
-          {/* 負責人選擇器 */}
+        {/* 標題 - 彈性寬度 */}
+        <div className="flex-1 min-w-0 h-12 flex items-center pr-4">
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className={`text-sm truncate cursor-pointer hover:text-blue-600 ${
+                task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-800'
+              }`}
+              onClick={() => setSelectedTask(task)}
+            >
+              {task.title}
+            </span>
+          </div>
+        </div>
+
+        {/* 負責人欄位 - 動態寬度 */}
+        <div className="h-12 flex items-center shrink-0" style={{ width: columnWidths.assignee }}>
           <DropdownMenu open={assigneeOpen} onOpenChange={setAssigneeOpen}>
             <DropdownMenuTrigger asChild>
-              <button
-                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border transition-colors hover:bg-gray-50 ${
-                  task.assignee ? 'border-gray-200 text-foreground' : 'border-dashed border-gray-300 text-muted-foreground'
-                }`}
-              >
-                <User className="h-3 w-3" />
-                {task.assignee || '負責人'}
+              <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
+                <User className="h-4 w-4 shrink-0" />
+                <span className="truncate flex-1 text-left">{task.assignee || '-'}</span>
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
+            <DropdownMenuContent align="start" className="w-40">
               {teamMembers.map((member) => (
-                <DropdownMenuItem
-                  key={member}
-                  onClick={async () => {
-                    await updateTask(task.id, { assignee: member })
-                  }}
-                >
-                  <User className="h-3 w-3 mr-2" />
-                  {member}
+                <DropdownMenuItem key={member} onClick={() => updateTask(task.id, { assignee: member })} className="text-xs">
+                  <User className="h-3.5 w-3.5 mr-2 shrink-0" />{member}
                   {task.assignee === member && <Check className="h-3 w-3 ml-auto" />}
                 </DropdownMenuItem>
               ))}
-              {task.assignee && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-muted-foreground"
-                    onClick={async () => {
-                      await updateTask(task.id, { assignee: undefined })
-                    }}
-                  >
-                    <X className="h-3 w-3 mr-2" />
-                    清除負責人
-                  </DropdownMenuItem>
-                </>
-              )}
+              {task.assignee && <><DropdownMenuSeparator /><DropdownMenuItem className="text-xs text-gray-500" onClick={() => updateTask(task.id, { assignee: undefined })}><X className="h-3 w-3 mr-2" />清除</DropdownMenuItem></>}
             </DropdownMenuContent>
           </DropdownMenu>
+        </div>
 
-          {/* 組別選擇器 */}
-          <DropdownMenu open={groupOpen} onOpenChange={setGroupOpen}>
-            <DropdownMenuTrigger asChild>
-              <button
-                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors hover:opacity-80 ${
-                  task.groupName
-                    ? `${getGroupColor(task.groupName).bg} ${getGroupColor(task.groupName).text}`
-                    : 'border border-dashed border-gray-300 text-muted-foreground hover:bg-gray-50'
-                }`}
-              >
-                <FolderOpen className="h-3 w-3" />
-                {task.groupName || '組別'}
+        {/* 開始日欄位 - 動態寬度 */}
+        <div className="h-12 flex items-center shrink-0" style={{ width: columnWidths.startDate }}>
+          <Popover open={startDatePickerOpen} onOpenChange={setStartDatePickerOpen}>
+            <PopoverTrigger asChild>
+              <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
+                <CalendarDays className="h-4 w-4 shrink-0" />
+                <span className="flex-1 text-left">{task.startDate ? formatDueDate(new Date(task.startDate)) : '-'}</span>
               </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              {availableGroups.map((group) => (
-                <DropdownMenuItem
-                  key={group.name}
-                  onClick={async () => {
-                    await updateTask(task.id, { groupName: group.name })
-                  }}
-                >
-                  <span className={`w-2 h-2 rounded-full mr-2 ${getGroupColor(group.name).bg}`} />
-                  {group.name}
-                  {task.groupName === group.name && <Check className="h-3 w-3 ml-auto" />}
-                </DropdownMenuItem>
-              ))}
-              {task.groupName && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-muted-foreground"
-                    onClick={async () => {
-                      await updateTask(task.id, { groupName: undefined })
-                    }}
-                  >
-                    <X className="h-3 w-3 mr-2" />
-                    清除組別
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <CalendarComponent mode="single" selected={task.startDate ? new Date(task.startDate) : undefined} onSelect={(date) => { updateTask(task.id, { startDate: date || undefined }); setStartDatePickerOpen(false) }} locale={zhTW} />
+              {task.startDate && <div className="p-2 border-t"><button className="w-full text-xs text-gray-500 hover:text-red-500" onClick={() => { updateTask(task.id, { startDate: undefined }); setStartDatePickerOpen(false) }}>清除</button></div>}
+            </PopoverContent>
+          </Popover>
+        </div>
 
-          {/* 標籤選擇器 */}
-          <DropdownMenu open={tagOpen} onOpenChange={setTagOpen}>
-            <DropdownMenuTrigger asChild>
-              <button
-                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors hover:opacity-80 ${
-                  task.tags && task.tags.length > 0
-                    ? `${getTagColor(task.tags[0]).bg} ${getTagColor(task.tags[0]).text}`
-                    : 'border border-dashed border-gray-300 text-muted-foreground hover:bg-gray-50'
-                }`}
-              >
-                <TagIcon className="h-3 w-3" />
-                {task.tags && task.tags.length > 0 ? task.tags.join(', ') : '標籤'}
+        {/* 截止日欄位 - 動態寬度 */}
+        <div className="h-12 flex items-center shrink-0" style={{ width: columnWidths.dueDate }}>
+          <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+            <PopoverTrigger asChild>
+              <button className={`inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full ${
+                isOverdue ? 'text-red-600 bg-red-50' : 'text-gray-600'
+              }`}>
+                <Calendar className="h-4 w-4 shrink-0" />
+                <span className="flex-1 text-left">{task.dueDate ? formatDueDate(new Date(task.dueDate)) : '-'}</span>
               </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              {availableTags.map((tag) => {
-                const isSelected = (task.tags || []).includes(tag.name)
-                return (
-                  <DropdownMenuItem
-                    key={tag.name}
-                    onClick={async () => {
-                      const currentTags = task.tags || []
-                      const newTags = isSelected
-                        ? currentTags.filter(t => t !== tag.name)
-                        : [...currentTags, tag.name]
-                      await updateTask(task.id, { tags: newTags })
-                    }}
-                  >
-                    <span className={`w-2 h-2 rounded-full mr-2 ${getTagColor(tag.name).bg}`} />
-                    {tag.name}
-                    {isSelected && <Check className="h-3 w-3 ml-auto" />}
-                  </DropdownMenuItem>
-                )
-              })}
-              {task.tags && task.tags.length > 0 && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-muted-foreground"
-                    onClick={async () => {
-                      await updateTask(task.id, { tags: [] })
-                    }}
-                  >
-                    <X className="h-3 w-3 mr-2" />
-                    清除所有標籤
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <CalendarComponent mode="single" selected={task.dueDate ? new Date(task.dueDate) : undefined} onSelect={(date) => { updateTask(task.id, { dueDate: date || undefined }); setDatePickerOpen(false) }} locale={zhTW} />
+              {task.dueDate && <div className="p-2 border-t"><button className="w-full text-xs text-gray-500 hover:text-red-500" onClick={() => { updateTask(task.id, { dueDate: undefined }); setDatePickerOpen(false) }}>清除</button></div>}
+            </PopoverContent>
+          </Popover>
+        </div>
 
-          {/* 優先級選擇器 */}
+        {/* 優先級欄位 - 動態寬度 */}
+        <div className="h-12 flex items-center shrink-0" style={{ width: columnWidths.priority }}>
           <DropdownMenu open={priorityOpen} onOpenChange={setPriorityOpen}>
             <DropdownMenuTrigger asChild>
-              <button
-                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-200 transition-colors hover:bg-gray-50"
-              >
-                <div className={`w-2.5 h-2.5 rounded-full ${
-                  task.priority === 'urgent' ? 'bg-red-500' :
-                  task.priority === 'high' ? 'bg-orange-400' :
-                  task.priority === 'medium' ? 'bg-yellow-400' : 'bg-green-400'
-                }`} />
-                {priorityConfig[task.priority].label}
+              <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
+                <span className="text-base shrink-0">{priorityConfig[task.priority].emoji}</span>
+                <span className="flex-1 text-left hidden sm:inline">{priorityConfig[task.priority].label}</span>
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
+            <DropdownMenuContent align="start" className="w-28">
               {(Object.keys(priorityConfig) as Array<keyof typeof priorityConfig>).map((key) => (
-                <DropdownMenuItem
-                  key={key}
-                  onClick={async () => {
-                    await updateTask(task.id, { priority: key })
-                  }}
-                >
-                  <span className="mr-2">{priorityConfig[key].emoji}</span>
-                  {priorityConfig[key].label}
+                <DropdownMenuItem key={key} onClick={() => updateTask(task.id, { priority: key })} className="text-xs">
+                  <span className="mr-2">{priorityConfig[key].emoji}</span>{priorityConfig[key].label}
                   {task.priority === key && <Check className="h-3 w-3 ml-auto" />}
                 </DropdownMenuItem>
               ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* 更多操作 - 固定寬度 */}
+        <div className="w-12 h-12 flex items-center justify-center shrink-0">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors opacity-0 group-hover:opacity-100">
+                <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zM12 10a2 2 0 11-4 0 2 2 0 014 0zM16 12a2 2 0 100-4 2 2 0 000 4z" />
+                </svg>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
+              {/* 組別 */}
+              <DropdownMenu open={groupOpen} onOpenChange={setGroupOpen}>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex items-center w-full px-2 py-1.5 text-xs hover:bg-gray-100 rounded">
+                    <FolderOpen className="h-3.5 w-3.5 mr-2" />
+                    組別：{task.groupName || '無'}
+                    <ChevronRight className="h-3 w-3 ml-auto" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="left" className="w-36">
+                  {availableGroups.map((group) => (
+                    <DropdownMenuItem key={group.name} onClick={() => updateTask(task.id, { groupName: group.name })} className="text-xs">
+                      <span className={`w-2 h-2 rounded-full mr-2 ${getGroupColor(group.name).bg}`} />{group.name}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-xs text-gray-500" onClick={() => updateTask(task.id, { groupName: undefined })}>清除組別</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {/* 標籤 */}
+              <DropdownMenu open={tagOpen} onOpenChange={setTagOpen}>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex items-center w-full px-2 py-1.5 text-xs hover:bg-gray-100 rounded">
+                    <TagIcon className="h-3.5 w-3.5 mr-2" />
+                    標籤：{task.tags?.length ? task.tags[0] : '無'}
+                    <ChevronRight className="h-3 w-3 ml-auto" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="left" className="w-36">
+                  {availableTags.map((tag) => {
+                    const tagSelected = (task.tags || []).includes(tag.name)
+                    return (
+                      <DropdownMenuItem key={tag.name} onClick={() => {
+                        const currentTags = task.tags || []
+                        const newTags = tagSelected ? currentTags.filter(t => t !== tag.name) : [...currentTags, tag.name]
+                        updateTask(task.id, { tags: newTags })
+                      }} className="text-xs">
+                        <span className={`w-2 h-2 rounded-full mr-2 ${getTagColor(tag.name).bg}`} />{tag.name}
+                        {tagSelected && <Check className="h-3 w-3 ml-auto" />}
+                      </DropdownMenuItem>
+                    )
+                  })}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-xs text-gray-500" onClick={() => updateTask(task.id, { tags: [] })}>清除標籤</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-xs text-red-600" onClick={() => deleteTask(task.id)}>
+                <Trash2 className="h-3.5 w-3.5 mr-2" />刪除任務
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1466,7 +1558,91 @@ export default function TasksPage() {
     )
   }
 
-  // 渲染分組任務
+  // 為了向後兼容，TaskItem 使用 SortableTaskItem
+  const TaskItem = SortableTaskItem
+
+  // 依照 taskOrder 排序任務
+  const sortTasksByOrder = useCallback((tasksToSort: Task[]) => {
+    return [...tasksToSort].sort((a, b) => {
+      const aIndex = taskOrder.indexOf(a.id)
+      const bIndex = taskOrder.indexOf(b.id)
+      if (aIndex === -1 && bIndex === -1) return 0
+      if (aIndex === -1) return 1
+      if (bIndex === -1) return -1
+      return aIndex - bIndex
+    })
+  }, [taskOrder])
+
+  // 可拖曳調整寬度的分隔線元件（放在欄位左側）
+  const ResizeHandle = ({ column }: { column: string }) => (
+    <div
+      className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-400/50 active:bg-blue-500/50 transition-colors z-20"
+      onMouseDown={(e) => handleResizeStart(column, e)}
+    />
+  )
+
+  // 判斷是否全選
+  const isAllSelected = filteredTasks.length > 0 && selectedTaskIds.size === filteredTasks.length
+  const isPartiallySelected = selectedTaskIds.size > 0 && selectedTaskIds.size < filteredTasks.length
+
+  // ClickUp 風格的表格標題列（含可拖曳調整寬度）
+  const TableHeader = () => (
+    <div className={`flex items-center bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 sticky top-0 z-10 ${resizing ? 'select-none' : ''}`}>
+      {/* 拖曳手柄佔位 */}
+      <div className="w-10 h-10 shrink-0" />
+      {/* 全選核取框 */}
+      <div className="w-8 h-10 flex items-center justify-center shrink-0">
+        <button
+          className="w-4 h-4 flex items-center justify-center"
+          onClick={isAllSelected ? deselectAllTasks : selectAllTasks}
+          title={isAllSelected ? '取消全選' : '全選所有任務'}
+        >
+          {isAllSelected ? (
+            <CheckSquare className="h-4 w-4 text-blue-600" />
+          ) : isPartiallySelected ? (
+            <div className="w-4 h-4 border-2 border-blue-600 rounded flex items-center justify-center">
+              <div className="w-2 h-0.5 bg-blue-600" />
+            </div>
+          ) : (
+            <Square className="h-4 w-4 text-gray-400 hover:text-blue-600" />
+          )}
+        </button>
+      </div>
+      {/* 狀態佔位 */}
+      <div className="w-8 h-10 shrink-0" />
+      {/* 任務名稱 */}
+      <div className="flex-1 min-w-0 h-10 flex items-center pr-4">
+        <span className="text-gray-500">任務名稱</span>
+      </div>
+      {/* 負責人 - 可調整寬度 */}
+      <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.assignee }}>
+        <ResizeHandle column="assignee" />
+        <User className="h-4 w-4 shrink-0 text-gray-400 mr-2" />
+        <span className="text-gray-500">負責人</span>
+      </div>
+      {/* 開始日期 - 可調整寬度 */}
+      <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.startDate }}>
+        <ResizeHandle column="startDate" />
+        <CalendarDays className="h-4 w-4 shrink-0 text-gray-400 mr-2" />
+        <span className="text-gray-500">開始日</span>
+      </div>
+      {/* 截止日期 - 可調整寬度 */}
+      <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.dueDate }}>
+        <ResizeHandle column="dueDate" />
+        <Calendar className="h-4 w-4 shrink-0 text-gray-400 mr-2" />
+        <span className="text-gray-500">截止日</span>
+      </div>
+      {/* 優先級 - 可調整寬度 */}
+      <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.priority }}>
+        <ResizeHandle column="priority" />
+        <span className="text-gray-500">優先級</span>
+      </div>
+      {/* 更多操作佔位 */}
+      <div className="w-12 h-10 shrink-0" />
+    </div>
+  )
+
+  // 渲染分組任務（支援拖曳 + 收合）
   const renderGroupedTasks = (groups: Record<string, Task[]>, labels: Record<string, { emoji?: string; label: string; className?: string }>) => {
     // 排序 keys：overdue > today > tomorrow > date_xxx（按日期） > noDueDate
     const sortedKeys = Object.keys(groups).sort((a, b) => {
@@ -1475,30 +1651,58 @@ export default function TasksPage() {
       const bOrder = order[b] ?? (b.startsWith('date_') ? 3 : 998)
 
       if (aOrder !== bOrder) return aOrder - bOrder
-      // 如果都是 date_xxx，按日期排序
       if (a.startsWith('date_') && b.startsWith('date_')) {
         return a.localeCompare(b)
       }
       return 0
     })
 
-    return sortedKeys.map(key => {
-      const groupTasks = groups[key]
-      if (!groupTasks || groupTasks.length === 0) return null
-      const config = labels[key] || { label: key }
-      return (
-        <div key={key} className="space-y-2">
-          <h2 className={`font-semibold flex items-center gap-2 ${config.className || ''}`}>
-            {config.emoji} {config.label} ({groupTasks.length})
-          </h2>
-          <div className="space-y-2">
-            {groupTasks.map((task: Task) => (
-              <TaskItem key={task.id} task={task} />
-            ))}
-          </div>
-        </div>
-      )
+    // 合併所有可見任務 ID 用於 SortableContext（只包含未收合的分組）
+    const allTaskIds = sortedKeys.flatMap(key => {
+      if (collapsedGroups.has(key)) return []
+      return (groups[key] || []).map(t => t.id)
     })
+
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+        {/* 表格標題列 */}
+        <TableHeader />
+
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={allTaskIds} strategy={verticalListSortingStrategy}>
+            {sortedKeys.map(key => {
+              const groupTasks = sortTasksByOrder(groups[key] || [])
+              if (!groupTasks || groupTasks.length === 0) return null
+              const config = labels[key] || { label: key }
+              const isCollapsed = collapsedGroups.has(key)
+
+              return (
+                <div key={key}>
+                  {/* 分組標題行 - 可點擊收合 */}
+                  <button
+                    onClick={() => toggleGroupCollapse(key)}
+                    className={`flex items-center gap-2 w-full px-4 py-2.5 bg-gray-50 border-b border-gray-100 hover:bg-gray-100 transition-colors text-left ${config.className || ''}`}
+                  >
+                    <ChevronRight className={`h-4 w-4 text-gray-400 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
+                    {config.emoji && <span className="text-sm">{config.emoji}</span>}
+                    <span className="text-sm font-medium text-gray-700">{config.label}</span>
+                    <span className="text-xs text-gray-400 bg-gray-200 px-1.5 py-0.5 rounded">{groupTasks.length}</span>
+                  </button>
+                  {/* 任務列表 - 收合時隱藏 */}
+                  {!isCollapsed && (
+                    <div>
+                      {groupTasks.map((task: Task) => (
+                        <SortableTaskItem key={task.id} task={task} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </SortableContext>
+        </DndContext>
+      </div>
+    )
   }
 
   return (
@@ -1517,111 +1721,78 @@ export default function TasksPage() {
           </button>
         </div>
 
-        {/* 批次操作工具列 */}
-        {isSelectionMode && (
-          <div className="flex items-center justify-between bg-gray-100 rounded-lg p-3">
-            <div className="flex items-center gap-3">
+        {/* 搜尋和新增任務區 */}
+        <div className="flex gap-3 items-center">
+          {/* 搜尋框 */}
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="搜尋任務..."
+              className="pl-9 border-gray-200 focus:border-gray-400 focus:ring-gray-400"
+            />
+            {searchQuery && (
               <button
-                onClick={selectedTaskIds.size === filteredTasks.length ? deselectAllTasks : selectAllTasks}
-                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
               >
-                {selectedTaskIds.size === filteredTasks.length ? (
-                  <CheckSquare className="h-4 w-4" />
-                ) : (
-                  <Square className="h-4 w-4" />
-                )}
-                {selectedTaskIds.size === filteredTasks.length ? '取消全選' : '全選'}
+                <X className="h-4 w-4" />
               </button>
-              <span className="text-sm text-muted-foreground">
-                已選取 {selectedTaskIds.size} / {filteredTasks.length} 個任務
-              </span>
-            </div>
-
-            {selectedTaskIds.size > 0 && (
-              <div className="flex items-center gap-2">
-                {/* 批次編輯 */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button className="flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-md hover:bg-white transition-colors">
-                      <Edit3 className="h-4 w-4" />
-                      批次編輯
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
-                    <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">設定優先級</div>
-                    {(Object.keys(priorityConfig) as Array<keyof typeof priorityConfig>).map((key) => (
-                      <DropdownMenuItem
-                        key={key}
-                        onClick={() => handleBatchUpdate({ priority: key })}
-                      >
-                        <span className="mr-2">{priorityConfig[key].emoji}</span>
-                        {priorityConfig[key].label}
-                      </DropdownMenuItem>
-                    ))}
-                    <DropdownMenuSeparator />
-                    <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">設定負責人</div>
-                    {teamMembers.map((member) => (
-                      <DropdownMenuItem
-                        key={member}
-                        onClick={() => handleBatchUpdate({ assignee: member })}
-                      >
-                        <User className="h-3 w-3 mr-2" />
-                        {member}
-                      </DropdownMenuItem>
-                    ))}
-                    <DropdownMenuItem
-                      onClick={() => handleBatchUpdate({ assignee: undefined })}
-                      className="text-muted-foreground"
-                    >
-                      <X className="h-3 w-3 mr-2" />
-                      清除負責人
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">設定組別</div>
-                    {availableGroups.map((group) => (
-                      <DropdownMenuItem
-                        key={group.name}
-                        onClick={() => handleBatchUpdate({ groupName: group.name })}
-                      >
-                        <span className={`w-2 h-2 rounded-full mr-2 ${getGroupColor(group.name).bg}`} />
-                        {group.name}
-                      </DropdownMenuItem>
-                    ))}
-                    <DropdownMenuItem
-                      onClick={() => handleBatchUpdate({ groupName: undefined })}
-                      className="text-muted-foreground"
-                    >
-                      <X className="h-3 w-3 mr-2" />
-                      清除組別
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-
-                {/* 批次完成 */}
-                <button
-                  onClick={handleBatchComplete}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-md hover:bg-green-50 hover:border-green-300 hover:text-green-600 transition-colors"
-                >
-                  <Check className="h-4 w-4" />
-                  標記完成
-                </button>
-
-                {/* 批次刪除 */}
-                <button
-                  onClick={handleBatchDelete}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-red-200 text-red-600 rounded-md hover:bg-red-50 transition-colors"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  刪除
-                </button>
-              </div>
             )}
+          </div>
+
+          {/* 新增任務 */}
+          <Input
+            value={newTaskTitle}
+            onChange={(e) => setNewTaskTitle(e.target.value)}
+            placeholder="輸入新任務..."
+            onKeyDown={(e) => e.key === 'Enter' && handleAddTask()}
+            className="w-64 border-gray-200 focus:border-gray-400 focus:ring-gray-400"
+          />
+          <button
+            onClick={handleAddTask}
+            className="flex items-center gap-1.5 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-md hover:bg-gray-800 transition-colors shrink-0"
+          >
+            <Plus className="h-4 w-4" />
+            新增
+          </button>
+          {/* 批次選取按鈕 */}
+          <button
+            onClick={toggleSelectionMode}
+            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md transition-colors shrink-0 ${
+              isSelectionMode
+                ? 'bg-primary text-primary-foreground'
+                : 'border border-gray-200 hover:bg-gray-50'
+            }`}
+          >
+            {isSelectionMode ? (
+              <>
+                <X className="h-4 w-4" />
+                取消
+              </>
+            ) : (
+              <CheckSquare className="h-4 w-4" />
+            )}
+          </button>
+        </div>
+
+        {/* 搜尋結果提示 */}
+        {searchQuery && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Search className="h-4 w-4" />
+            <span>搜尋「{searchQuery}」找到 {filteredTasks.length} 筆結果</span>
+            <button
+              onClick={() => setSearchQuery('')}
+              className="text-xs px-2 py-0.5 rounded bg-gray-100 hover:bg-gray-200 transition-colors"
+            >
+              清除搜尋
+            </button>
           </div>
         )}
 
-        {/* Tab 和工具列 - Acctual 風格 */}
-        <div className="flex items-center justify-between border-b pb-3">
+        {/* Tab 和工具列 */}
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">
             <button
               onClick={() => setFilter('all')}
@@ -1764,81 +1935,6 @@ export default function TasksPage() {
           </div>
         </div>
 
-        {/* 搜尋和新增任務區 - Acctual 風格 */}
-        <div className="bg-white rounded-lg border p-4 space-y-3">
-          {/* 搜尋框 */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜尋任務（標題、內容、負責人、組別、日期...）"
-              className="pl-9 border-gray-200 focus:border-gray-400 focus:ring-gray-400"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-
-          {/* 新增任務 */}
-          <div className="flex gap-3">
-            <Input
-              value={newTaskTitle}
-              onChange={(e) => setNewTaskTitle(e.target.value)}
-              placeholder="輸入新任務..."
-              onKeyDown={(e) => e.key === 'Enter' && handleAddTask()}
-              className="flex-1 border-gray-200 focus:border-gray-400 focus:ring-gray-400"
-            />
-            <button
-              onClick={handleAddTask}
-              className="flex items-center gap-1.5 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-md hover:bg-gray-800 transition-colors"
-            >
-              <Plus className="h-4 w-4" />
-              新增
-            </button>
-            {/* 批次選取按鈕 */}
-            <button
-              onClick={toggleSelectionMode}
-              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
-                isSelectionMode
-                  ? 'bg-primary text-primary-foreground'
-                  : 'border border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              {isSelectionMode ? (
-                <>
-                  <X className="h-4 w-4" />
-                  取消選取
-                </>
-              ) : (
-                <>
-                  <CheckSquare className="h-4 w-4" />
-                  批次選取
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* 搜尋結果提示 */}
-        {searchQuery && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Search className="h-4 w-4" />
-            <span>搜尋「{searchQuery}」找到 {filteredTasks.length} 筆結果</span>
-            <button
-              onClick={() => setSearchQuery('')}
-              className="text-xs px-2 py-0.5 rounded bg-gray-100 hover:bg-gray-200 transition-colors"
-            >
-              清除搜尋
-            </button>
-          </div>
-        )}
-
         {error && (
           <div className="bg-destructive/10 text-destructive p-4 rounded-lg">
             {error}
@@ -1894,22 +1990,27 @@ export default function TasksPage() {
           )}
 
           {completedTasks.length > 0 && (
-            <>
-              <Separator />
-              <div className="space-y-2">
-                <Button variant="ghost" className="w-full justify-start" onClick={() => setShowCompleted(!showCompleted)}>
-                  {showCompleted ? <ChevronDown className="h-4 w-4 mr-2" /> : <ChevronRight className="h-4 w-4 mr-2" />}
-                  已完成 ({completedTasks.length})
-                </Button>
-                {showCompleted && (
-                  <div className="space-y-2">
-                    {completedTasks.map((task: Task) => (
-                      <TaskItem key={task.id} task={task} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
+            <div className="space-y-1.5 pt-4 border-t">
+              <button
+                className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-700 transition-colors uppercase tracking-wide"
+                onClick={() => setShowCompleted(!showCompleted)}
+              >
+                {showCompleted ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                <span>已完成</span>
+                <span className="text-gray-400 font-normal">({completedTasks.length})</span>
+              </button>
+              {showCompleted && (
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  <SortableContext items={completedTasks.map(t => t.id)} strategy={verticalListSortingStrategy}>
+                    <div className="space-y-1.5">
+                      {sortTasksByOrder(completedTasks).map((task: Task) => (
+                        <SortableTaskItem key={task.id} task={task} />
+                      ))}
+                    </div>
+                  </SortableContext>
+                </DndContext>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -1929,6 +2030,192 @@ export default function TasksPage() {
         onAddGroup={handleAddGroup}
         onRemoveGroup={handleRemoveGroup}
       />
+
+      {/* 底部固定批次操作工具列 */}
+      {selectedTaskIds.size > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 bg-white border-t shadow-lg">
+          <div className="max-w-6xl mx-auto px-6 py-3">
+            <div className="flex items-center justify-between">
+              {/* 左側：選取資訊 */}
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={deselectAllTasks}
+                  className="p-1.5 rounded-md hover:bg-gray-100 transition-colors"
+                  title="取消選取"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+                <span className="text-sm font-medium">
+                  已選取 {selectedTaskIds.size} 個任務
+                </span>
+              </div>
+
+              {/* 右側：操作按鈕 */}
+              <div className="flex items-center gap-2">
+                {/* 負責人 */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="flex items-center gap-1.5 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
+                      <User className="h-4 w-4" />
+                      負責人
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    {teamMembers.map((member) => (
+                      <DropdownMenuItem
+                        key={member}
+                        onClick={() => handleBatchUpdate({ assignee: member })}
+                      >
+                        <User className="h-3 w-3 mr-2" />
+                        {member}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => handleBatchUpdate({ assignee: undefined })}
+                      className="text-muted-foreground"
+                    >
+                      <X className="h-3 w-3 mr-2" />
+                      清除負責人
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {/* 開始日期 */}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button className="flex items-center gap-1.5 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
+                      <Calendar className="h-4 w-4" />
+                      開始日
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="end" side="top">
+                    <CalendarComponent
+                      mode="single"
+                      locale={zhTW}
+                      onSelect={(date) => {
+                        if (date) {
+                          handleBatchUpdate({ startDate: date })
+                        }
+                      }}
+                      footer={
+                        <button
+                          onClick={() => handleBatchUpdate({ startDate: undefined })}
+                          className="w-full mt-2 px-3 py-1.5 text-sm text-muted-foreground hover:bg-gray-100 rounded-md transition-colors"
+                        >
+                          清除開始日期
+                        </button>
+                      }
+                    />
+                  </PopoverContent>
+                </Popover>
+
+                {/* 截止日期 */}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button className="flex items-center gap-1.5 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
+                      <CalendarDays className="h-4 w-4" />
+                      截止日
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="end" side="top">
+                    <CalendarComponent
+                      mode="single"
+                      locale={zhTW}
+                      onSelect={(date) => {
+                        if (date) {
+                          handleBatchUpdate({ dueDate: date })
+                        }
+                      }}
+                      footer={
+                        <button
+                          onClick={() => handleBatchUpdate({ dueDate: undefined })}
+                          className="w-full mt-2 px-3 py-1.5 text-sm text-muted-foreground hover:bg-gray-100 rounded-md transition-colors"
+                        >
+                          清除截止日期
+                        </button>
+                      }
+                    />
+                  </PopoverContent>
+                </Popover>
+
+                {/* 優先級 */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="flex items-center gap-1.5 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
+                      <AlertCircle className="h-4 w-4" />
+                      優先級
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {(Object.keys(priorityConfig) as Array<keyof typeof priorityConfig>).map((key) => (
+                      <DropdownMenuItem
+                        key={key}
+                        onClick={() => handleBatchUpdate({ priority: key })}
+                      >
+                        <span className="mr-2">{priorityConfig[key].emoji}</span>
+                        {priorityConfig[key].label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {/* 組別 */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="flex items-center gap-1.5 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
+                      <Users className="h-4 w-4" />
+                      組別
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    {availableGroups.map((group) => (
+                      <DropdownMenuItem
+                        key={group.name}
+                        onClick={() => handleBatchUpdate({ groupName: group.name })}
+                      >
+                        <span className={`w-2 h-2 rounded-full mr-2 ${getGroupColor(group.name).bg}`} />
+                        {group.name}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => handleBatchUpdate({ groupName: undefined })}
+                      className="text-muted-foreground"
+                    >
+                      <X className="h-3 w-3 mr-2" />
+                      清除組別
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                <div className="w-px h-6 bg-gray-300 mx-1" />
+
+                {/* 標記完成 */}
+                <button
+                  onClick={handleBatchComplete}
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm bg-green-100 text-green-700 hover:bg-green-200 rounded-md transition-colors"
+                >
+                  <Check className="h-4 w-4" />
+                  完成
+                </button>
+
+                {/* 刪除 */}
+                <button
+                  onClick={handleBatchDelete}
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm bg-red-100 text-red-700 hover:bg-red-200 rounded-md transition-colors"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  刪除
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

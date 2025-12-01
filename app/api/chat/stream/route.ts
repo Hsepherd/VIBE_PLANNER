@@ -1,12 +1,12 @@
 import { NextRequest } from 'next/server'
-import openai, { getFullSystemPrompt, getMeetingTranscriptPrompt, isLongMeetingTranscript } from '@/lib/openai'
+import openai, { getFullSystemPrompt, getMeetingTranscriptPrompt, isLongMeetingTranscript, generateCalendarContext } from '@/lib/openai'
 import { generatePreferencePrompt, shouldInjectPreferences } from '@/lib/preferences'
 import { generateFewShotPrompt } from '@/lib/few-shot-learning'
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { messages, image } = body
+    const { messages, image, calendarTasks } = body
 
     // 取得最後一條使用者訊息
     const lastUserMessage = messages.filter((m: { role: string }) => m.role === 'user').pop()
@@ -37,6 +37,14 @@ export async function POST(request: NextRequest) {
         }
       } catch (error) {
         console.error('載入偏好設定失敗:', error)
+      }
+    }
+
+    // 注入行事曆上下文（讓 AI 了解目前的任務狀態）
+    if (calendarTasks && calendarTasks.length > 0) {
+      const calendarContext = generateCalendarContext(calendarTasks)
+      if (calendarContext) {
+        systemPrompt += '\n' + calendarContext
       }
     }
 

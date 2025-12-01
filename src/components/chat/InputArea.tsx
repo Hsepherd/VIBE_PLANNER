@@ -19,6 +19,7 @@ export default function InputArea() {
   const {
     addMessage,
     messages,
+    tasks,
     isLoading,
     setIsLoading,
     addApiUsage,
@@ -145,6 +146,18 @@ export default function InputArea() {
         ]
       }
 
+      // 準備行事曆資料（用於 AI 上下文）
+      const calendarTasks = tasks.map(t => ({
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        status: t.status,
+        priority: t.priority,
+        dueDate: t.dueDate,
+        assignee: t.assignee,
+        project: t.project,
+      }))
+
       // 呼叫 Streaming API
       const response = await fetch('/api/chat/stream', {
         method: 'POST',
@@ -154,6 +167,7 @@ export default function InputArea() {
         body: JSON.stringify({
           messages: apiMessages,
           image: currentImage,
+          calendarTasks, // 傳送任務資料給 AI
         }),
       })
 

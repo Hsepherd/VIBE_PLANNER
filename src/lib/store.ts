@@ -18,7 +18,7 @@ export interface Task {
   id: string
   title: string
   description?: string
-  status: 'pending' | 'in_progress' | 'completed'
+  status: 'pending' | 'in_progress' | 'completed' | 'on_hold'
   priority: 'low' | 'medium' | 'high' | 'urgent'
   dueDate?: Date
   assignee?: string
@@ -372,6 +372,7 @@ export const useAppStore = create<AppState>()(
         projects: state.projects,
         apiUsage: state.apiUsage,
         processedTaskGroups: state.processedTaskGroups,
+        pendingTaskGroups: state.pendingTaskGroups,
       }),
     }
   )

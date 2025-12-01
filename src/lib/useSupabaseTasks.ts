@@ -8,9 +8,10 @@ export interface Task {
   id: string
   title: string
   description?: string
-  status: 'pending' | 'in_progress' | 'completed'
+  status: 'pending' | 'in_progress' | 'completed' | 'on_hold'
   priority: 'low' | 'medium' | 'high' | 'urgent'
-  dueDate?: Date
+  startDate?: Date  // 開始日期
+  dueDate?: Date    // 截止日期
   assignee?: string
   projectId?: string
   project?: string
@@ -29,6 +30,7 @@ function dbTaskToTask(dbTask: DbTask): Task {
     description: dbTask.description || undefined,
     status: dbTask.status,
     priority: dbTask.priority,
+    startDate: dbTask.start_date ? new Date(dbTask.start_date) : undefined,
     dueDate: dbTask.due_date ? new Date(dbTask.due_date) : undefined,
     assignee: dbTask.assignee || undefined,
     projectId: dbTask.project_id || undefined,
@@ -76,6 +78,7 @@ export function useSupabaseTasks() {
         description: task.description || null,
         status: task.status,
         priority: task.priority,
+        start_date: task.startDate ? task.startDate.toISOString() : null,
         due_date: task.dueDate ? task.dueDate.toISOString() : null,
         assignee: task.assignee || null,
         project_id: task.projectId || null,
@@ -99,6 +102,7 @@ export function useSupabaseTasks() {
       if ('description' in updates) dbUpdates.description = updates.description || null
       if ('status' in updates) dbUpdates.status = updates.status!
       if ('priority' in updates) dbUpdates.priority = updates.priority!
+      if ('startDate' in updates) dbUpdates.start_date = updates.startDate ? updates.startDate.toISOString() : null
       if ('dueDate' in updates) dbUpdates.due_date = updates.dueDate ? updates.dueDate.toISOString() : null
       if ('assignee' in updates) dbUpdates.assignee = updates.assignee || null
       if ('projectId' in updates) dbUpdates.project_id = updates.projectId || null

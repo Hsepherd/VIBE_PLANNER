@@ -29,8 +29,9 @@ export interface DbTask {
   id: string
   title: string
   description: string | null
-  status: 'pending' | 'in_progress' | 'completed'
+  status: 'pending' | 'in_progress' | 'completed' | 'on_hold'
   priority: 'low' | 'medium' | 'high' | 'urgent'
+  start_date: string | null
   due_date: string | null
   assignee: string | null
   project_id: string | null

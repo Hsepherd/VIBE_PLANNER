@@ -16,7 +16,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Check, X, CheckSquare, Square, Clock, Loader2, Eye, ThumbsUp, ThumbsDown, Pencil } from 'lucide-react'
+import { Check, X, CheckSquare, Square, Clock, Loader2, Eye, ThumbsUp, ThumbsDown, Pencil, RefreshCw } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import {
   Popover,
@@ -134,6 +134,8 @@ export default function ChatWindow() {
   // 編輯負責人狀態
   const [editingAssignee, setEditingAssignee] = useState<{ groupId: string; taskIndex: number } | null>(null)
   const [assigneeInputValue, setAssigneeInputValue] = useState('')
+  // 重新生成狀態
+  const [isRegenerating, setIsRegenerating] = useState<string | null>(null) // groupId 或 'single-{groupId}-{taskIndex}'
 
   // 當有新的待確認任務群組時，預設不選（讓用戶自己決定）
   useEffect(() => {
@@ -439,6 +441,105 @@ export default function ChatWindow() {
   // 當前查看任務的解析內容
   const parsedDescription = currentViewingTask ? parseDescription(currentViewingTask.description || '') : null
 
+  // 重新生成全部任務
+  const handleRegenerateAll = async (groupId: string) => {
+    const group = pendingTaskGroups.find(g => g.id === groupId)
+    if (!group || !group.sourceContext) return
+
+    setIsRegenerating(groupId)
+    try {
+      // 取得完整對話歷史，確保 AI 有足夠上下文
+      const chatHistory = messages.map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content
+      }))
+
+      // 加入重新生成的指令
+      const regeneratePrompt = `請根據我們之前的對話內容，重新萃取任務。
+
+原始內容：
+${group.sourceContext}
+
+請重新生成任務，確保：
+1. 保留對話中提到的所有細節（如負責人、課程名稱等）
+2. 截止日期使用正確的年份（2025年）
+3. 回傳 JSON 格式的任務列表`
+
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [...chatHistory, { role: 'user', content: regeneratePrompt }],
+        }),
+      })
+      const result = await response.json()
+      // API 回傳格式: { success: true, data: { type, tasks, message } }
+      if (result.success && result.data?.tasks && result.data.tasks.length > 0) {
+        updatePendingTaskGroup(groupId, result.data.tasks)
+      }
+    } catch (err) {
+      console.error('重新生成失敗:', err)
+    } finally {
+      setIsRegenerating(null)
+    }
+  }
+
+  // 重新生成單一任務
+  const handleRegenerateSingle = async (groupId: string, taskIndex: number) => {
+    const group = pendingTaskGroups.find(g => g.id === groupId)
+    if (!group || !group.sourceContext) return
+
+    const task = group.tasks[taskIndex]
+    const regenerateId = `single-${groupId}-${taskIndex}`
+    setIsRegenerating(regenerateId)
+
+    try {
+      // 取得完整對話歷史，確保 AI 有足夠上下文
+      const chatHistory = messages.map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content
+      }))
+
+      const prompt = `請根據我們之前的對話內容，重新生成這個任務的詳細資訊。
+
+原始任務標題：${task.title}
+原始負責人：${task.assignee || '未指定'}
+
+原始內容：
+${group.sourceContext}
+
+請只回傳一個任務的 JSON，確保：
+1. 保留對話中提到的細節（如負責人名稱、課程名稱等）
+2. 截止日期使用 2025 年
+3. 格式如下：
+{
+  "type": "tasks_extracted",
+  "tasks": [{ "title": "...", "description": "...", "due_date": "2025-MM-DD", "assignee": "...", "priority": "...", "group": "..." }],
+  "message": "已重新生成任務"
+}`
+
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [...chatHistory, { role: 'user', content: prompt }],
+        }),
+      })
+      const result = await response.json()
+      // API 回傳格式: { success: true, data: { type, tasks, message } }
+      if (result.success && result.data?.tasks && result.data.tasks.length > 0) {
+        const newTask = result.data.tasks[0]
+        const updatedTasks = [...group.tasks]
+        updatedTasks[taskIndex] = { ...updatedTasks[taskIndex], ...newTask }
+        updatePendingTaskGroup(groupId, updatedTasks)
+      }
+    } catch (err) {
+      console.error('重新生成單一任務失敗:', err)
+    } finally {
+      setIsRegenerating(null)
+    }
+  }
+
   return (
     <div
       ref={containerRef}
@@ -562,14 +663,30 @@ export default function ChatWindow() {
                             {group.tasks.length} 個
                           </Badge>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => toggleAllInGroup(group.id, group.tasks.length)}
-                          className="text-xs"
-                        >
-                          {groupSelections.size === group.tasks.length ? '取消全選' : '全選'}
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleRegenerateAll(group.id)}
+                            disabled={isRegenerating === group.id || !group.sourceContext}
+                            className="text-xs"
+                            title="重新生成全部任務"
+                          >
+                            {isRegenerating === group.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => toggleAllInGroup(group.id, group.tasks.length)}
+                            className="text-xs"
+                          >
+                            {groupSelections.size === group.tasks.length ? '取消全選' : '全選'}
+                          </Button>
+                        </div>
                       </div>
 
                       <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
@@ -678,9 +795,20 @@ export default function ChatWindow() {
                                       </PopoverContent>
                                     </Popover>
                                   )}
+                                  {task.due_date && (
+                                    <Badge variant="outline" className="text-xs py-0 bg-amber-50 text-amber-700 border-amber-200">
+                                      <Clock className="h-2.5 w-2.5 mr-1" />
+                                      {task.due_date}
+                                    </Badge>
+                                  )}
                                   {task.priority && (
                                     <Badge variant={task.priority === 'urgent' ? 'destructive' : task.priority === 'high' ? 'default' : 'secondary'} className="text-xs py-0">
                                       {task.priority}
+                                    </Badge>
+                                  )}
+                                  {task.project && (
+                                    <Badge variant="outline" className="text-xs py-0 bg-purple-50 text-purple-700 border-purple-200">
+                                      📁 {task.project}
                                     </Badge>
                                   )}
                                   {task.group && (
@@ -690,7 +818,24 @@ export default function ChatWindow() {
                                   )}
                                 </div>
                               </div>
-                              <Eye className="h-4 w-4 text-muted-foreground shrink-0 mt-1" />
+                              <div className="flex items-center gap-1 shrink-0 mt-1">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleRegenerateSingle(group.id, taskIndex)
+                                  }}
+                                  disabled={isRegenerating === `single-${group.id}-${taskIndex}` || !group.sourceContext}
+                                  className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50"
+                                  title="重新生成此任務"
+                                >
+                                  {isRegenerating === `single-${group.id}-${taskIndex}` ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                  ) : (
+                                    <RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
+                                  )}
+                                </button>
+                                <Eye className="h-4 w-4 text-muted-foreground" />
+                              </div>
                             </div>
                           )
                         })}
