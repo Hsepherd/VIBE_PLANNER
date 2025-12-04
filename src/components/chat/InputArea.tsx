@@ -3,13 +3,14 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { useAppStore, type Message, type ExtractedTask } from '@/lib/store'
+import { useAppStore, type Message, type ExtractedTask, type TaskCategorizationItem } from '@/lib/store'
 import { useChatSessionContext } from '@/lib/ChatSessionContext'
 import { useConversationSummary } from '@/lib/useConversationSummary'
 import { useSupabaseTasks } from '@/lib/useSupabaseTasks'
+import { useSupabaseProjects } from '@/lib/useSupabaseProjects'
 import { useAuth } from '@/lib/useAuth'
 import { Send, Paperclip, X, Loader2, Image as ImageIcon, Brain } from 'lucide-react'
-import { parseAIResponse } from '@/lib/utils-client'
+import { parseAIResponse, findDuplicateTask } from '@/lib/utils-client'
 import { learnFromUserReply } from '@/lib/few-shot-learning'
 
 export default function InputArea() {
@@ -29,6 +30,7 @@ export default function InputArea() {
     addPendingTaskGroup,
     processedTaskGroups,
     setLastInputContext,
+    setPendingCategorizations,
   } = useAppStore()
 
   const {
@@ -39,6 +41,9 @@ export default function InputArea() {
 
   // 從 Supabase 取得真實的任務資料（用於 AI 上下文）
   const { tasks: supabaseTasks, refresh: refreshTasks } = useSupabaseTasks()
+
+  // 從 Supabase 取得專案資料（用於轉換 projectId 為專案名稱，以及自動建立新專案）
+  const { projects, addProject, refresh: refreshProjects } = useSupabaseProjects()
 
   // 取得目前登入使用者資料
   const { user } = useAuth()
@@ -155,6 +160,13 @@ export default function InputArea() {
       }
 
       // 準備任務列表資料（用於 AI 上下文）
+      // 將 projectId 轉換為專案名稱
+      const getProjectName = (projectId?: string) => {
+        if (!projectId) return undefined
+        const project = projects.find(p => p.id === projectId)
+        return project?.name
+      }
+
       const calendarTasks = supabaseTasks.map(t => ({
         id: t.id,
         title: t.title,
@@ -164,7 +176,7 @@ export default function InputArea() {
         dueDate: t.dueDate,
         startDate: t.startDate,
         assignee: t.assignee,
-        project: t.project,
+        project: getProjectName(t.projectId) || t.project, // 優先使用 projectId 對應的名稱
         groupName: t.groupName,
         tags: t.tags,
       }))
@@ -186,6 +198,12 @@ export default function InputArea() {
           image: currentImage,
           calendarTasks, // 傳送任務資料給 AI
           userInfo, // 傳送使用者資料給 AI
+          projects: projects.filter(p => p.status === 'active').map(p => ({
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            status: p.status,
+          })), // 傳送專案資料給 AI
         }),
       })
 
@@ -273,6 +291,38 @@ export default function InputArea() {
                 // 同步儲存到雲端
                 saveMessage(assistantMessageObj)
 
+                // 如果有建議的新專案，自動建立
+                if (parsed.type === 'tasks_extracted' && parsed.suggested_projects && parsed.suggested_projects.length > 0) {
+                  console.log('[InputArea] AI 建議建立新專案:', parsed.suggested_projects.map(p => p.name))
+
+                  // 檢查哪些專案是真正新的（不與現有專案重複）
+                  const existingProjectNames = projects.map(p => p.name.toLowerCase())
+                  const newProjects = parsed.suggested_projects.filter(
+                    p => !existingProjectNames.includes(p.name.toLowerCase())
+                  )
+
+                  // 建立新專案
+                  for (const project of newProjects) {
+                    try {
+                      console.log('[InputArea] 正在建立專案:', project.name)
+                      await addProject({
+                        name: project.name,
+                        description: project.description,
+                        status: 'active',
+                        progress: 0,
+                      })
+                      console.log('[InputArea] 專案建立成功:', project.name)
+                    } catch (err) {
+                      console.error('[InputArea] 建立專案失敗:', project.name, err)
+                    }
+                  }
+
+                  // 如果有建立新專案，重新載入專案列表
+                  if (newProjects.length > 0) {
+                    refreshProjects()
+                  }
+                }
+
                 // 如果有萃取出的任務，設定為待確認
                 // 只過濾「已經加入任務列表」的，不過濾「還在待確認中」的
                 if (parsed.type === 'tasks_extracted' && parsed.tasks && parsed.tasks.length > 0) {
@@ -294,41 +344,67 @@ export default function InputArea() {
                   const allAddedTitles = [...new Set([...addedTitles, ...existingTaskTitles])]
                   console.log('[InputArea] 已存在的任務標題數量:', allAddedTitles.length)
 
-                  // 相似度檢測函數（簡單版：共同關鍵字比例）
-                  const isSimilar = (title1: string, title2: string): boolean => {
-                    const words1 = title1.replace(/[，。、]/g, ' ').split(/\s+/).filter(w => w.length > 1)
-                    const words2 = title2.replace(/[，。、]/g, ' ').split(/\s+/).filter(w => w.length > 1)
-                    const commonWords = words1.filter(w => words2.some(w2 => w2.includes(w) || w.includes(w2)))
-                    return commonWords.length >= Math.min(words1.length, words2.length) * 0.5
-                  }
+                  // 使用改進的相似度檢測函數
+                  const duplicateWarnings: string[] = []
 
-                  // 只過濾掉「已加入任務列表」的任務
+                  // 過濾掉「已加入任務列表」的任務，並記錄重複警告
                   const newTasks = (parsed.tasks as ExtractedTask[]).filter(task => {
-                    const normalizedTitle = task.title.trim().toLowerCase()
-                    // 檢查是否已在任務列表中（完全重複）
-                    if (allAddedTitles.includes(normalizedTitle)) {
-                      console.log('[InputArea] 過濾掉重複任務:', task.title)
+                    const result = findDuplicateTask(task.title, allAddedTitles, 0.5)
+
+                    if (result.isDuplicate) {
+                      const warningMsg = result.similarity === 1
+                        ? `「${task.title}」與現有任務完全重複`
+                        : `「${task.title}」與「${result.matchedTitle}」相似度 ${Math.round(result.similarity * 100)}%`
+                      duplicateWarnings.push(warningMsg)
+                      console.log('[InputArea] 過濾掉重複/相似任務:', task.title, '→', result.matchedTitle)
                       return false
                     }
-                    // 檢查是否與已加入的任務相似
-                    const hasSimilar = allAddedTitles.some(existing => isSimilar(normalizedTitle, existing))
-                    if (hasSimilar) {
-                      console.log('[InputArea] 過濾掉相似任務:', task.title)
-                    }
-                    return !hasSimilar
+                    return true
                   })
+
+                  // 如果有重複警告，在 console 顯示
+                  if (duplicateWarnings.length > 0) {
+                    console.log('[InputArea] 重複任務警告:', duplicateWarnings)
+                  }
 
                   console.log('[InputArea] 過濾後的新任務數量:', newTasks.length)
 
-                  // 新萃取的任務作為獨立群組加入（帶時間戳）
-                  if (newTasks.length > 0) {
+                  // 新萃取的任務作為獨立群組加入（帶時間戳和重複警告）
+                  if (newTasks.length > 0 || duplicateWarnings.length > 0) {
                     console.log('[InputArea] 加入待確認任務群組...')
-                    addPendingTaskGroup(newTasks, userMessage.slice(0, 500))
+                    // 即使沒有新任務，如果有重複警告也要加入群組（用於顯示警告）
+                    if (newTasks.length > 0) {
+                      addPendingTaskGroup(newTasks, userMessage.slice(0, 500), duplicateWarnings.length > 0 ? duplicateWarnings : undefined)
+                    } else if (duplicateWarnings.length > 0) {
+                      // 只有警告沒有新任務時，仍然顯示警告訊息
+                      console.log('[InputArea] 所有任務都被過濾，顯示重複警告')
+                    }
                   } else {
                     console.log('[InputArea] 沒有新任務可加入（全被過濾）')
                   }
+                } else if (parsed.type === 'task_categorization' && parsed.categorizations && parsed.categorizations.length > 0) {
+                  // 處理任務分類建議
+                  console.log('[InputArea] 收到任務分類建議:', parsed.categorizations.length, '個')
+
+                  // 將分類建議轉換為 store 需要的格式（預設全選）
+                  const categorizationItems: TaskCategorizationItem[] = parsed.categorizations.map(cat => ({
+                    task_id: cat.task_id,
+                    task_title: cat.task_title,
+                    current_project: cat.current_project,
+                    suggested_project: cat.suggested_project,
+                    reason: cat.reason,
+                    selected: true, // 預設選中
+                  }))
+
+                  // 設定待確認分類
+                  setPendingCategorizations({
+                    id: crypto.randomUUID(),
+                    timestamp: new Date(),
+                    categorizations: categorizationItems,
+                    suggested_projects: parsed.suggested_projects || [],
+                  })
                 } else {
-                  console.log('[InputArea] 不是 tasks_extracted 類型或沒有任務')
+                  console.log('[InputArea] 不是 tasks_extracted 或 task_categorization 類型')
                 }
 
                 // 記錄 API 使用量

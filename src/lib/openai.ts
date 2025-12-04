@@ -205,6 +205,74 @@ description 欄位必須使用以下結構化格式，每個部分都要有：
 ❌ 錯誤：沒有時間戳
 ✅ 正確：每行都是「【時間】講者：完整原話」的格式
 
+## 🔄 任務分類功能（非常重要！）
+當使用者要求「幫我分類任務」、「自動歸類任務」、「把任務整理到專案」、「看一下任務幫我分類」或類似請求時，
+你必須使用 **task_categorization** 類型回應，分析現有任務並建議專案分類。
+
+**觸發關鍵字**：分類、歸類、整理到專案、分到專案、任務分類、自動分類
+
+**回應格式**：
+\`\`\`json
+{
+  "type": "task_categorization",
+  "suggested_projects": [
+    { "name": "新專案名稱", "description": "專案描述" }
+  ],
+  "categorizations": [
+    {
+      "task_id": "任務的 ID（從上下文中的任務列表取得）",
+      "task_title": "任務標題",
+      "current_project": "目前專案名稱或 null",
+      "suggested_project": "建議的專案名稱",
+      "reason": "分類理由（簡短說明，例如：與課程開發相關）"
+    }
+  ],
+  "message": "我已分析了您的任務，建議將它們分類到以下專案中..."
+}
+\`\`\`
+
+**分類規則**：
+1. 從上下文中的「📅 目前的行事曆狀態」取得任務列表和 ID
+2. 根據任務標題和描述分析任務性質
+3. **⚠️ 例行性任務不要歸類（非常重要！）**：
+   - 任務標題有「每日」「每天」「每週」「每月」→ 這是例行性任務，不需要歸到專案！
+   - 例行性任務應該保持「未分類」狀態
+   - ❌ 錯誤：「每日檢查老師作業」歸到任何專案
+   - ✅ 正確：「每日檢查老師作業」不列入 categorizations（跳過）
+4. **⚠️ 專案層級要夠高，但要保留老師/產品名稱（非常重要！）**：
+   - 專案 = 產品/課程/系統，底下自然包含行銷、營運、開發等工作
+   - 不要加「行銷」「營運」「優化」「廣告」等後綴
+   - ❌ 錯誤：「小課程行銷」「小課程營運」「Vicky小課程廣告」（分太細）
+   - ✅ 正確：「Vicky小課程」（一個專案包含所有 Vicky 小課程相關任務）
+   - ❌ 錯誤：「768課程行銷」「768課程優化」（分太細）
+   - ✅ 正確：「768課程」（一個專案包含所有相關任務）
+   - ❌ 錯誤：「電訪系統優化」「電訪名單分析」（分太細）
+   - ✅ 正確：「電訪系統」（一個專案包含所有電訪相關任務）
+5. **⚠️ 專案命名原則（保留老師名稱！）**：
+   - 如果任務提到老師名字，專案名稱要包含老師名字！
+   - 任務有「Vicky」「Vicky老師」→ 專案就叫「Vicky小課程」（不是「小課程」！）
+   - 任務有「Elena」「Elena老師」→ 專案就叫「Elena小課程」
+   - 任務只有「小課程」沒提老師 → 專案叫「小課程」
+   - 任務標題有「768」→ 專案就叫「768課程」
+   - 任務標題有「高音終極方程式」→ 專案就叫「高音終極方程式」
+   - 任務標題有「電訪」「名單」→ 專案就叫「電訪系統」
+   - 任務標題有「合約」「分潤」→ 專案就叫「老師合約」
+   - 任務標題有「學員」「學員管理」→ 專案就叫「學員管理」
+   - 任務標題有「AI」「機器人」→ 專案就叫「業務AI」
+6. **⚠️ 嚴格區分不同老師/產品（不要混在一起！）**：
+   - 「Vicky小課程」「Elena小課程」是不同老師的專案，不要混！
+   - 「768課程」「高音終極方程式」是不同的產品專案
+   - 「電訪系統」「學員管理」「老師合約」「業務AI」是不同的系統專案
+   - ❌ 錯誤：「Vicky老師課程」歸到「小課程」（漏掉老師名字）
+   - ✅ 正確：「Vicky老師課程」歸到「Vicky小課程」
+7. 如果現有專案都不適合，在 suggested_projects 中建議新專案（名稱要具體！）
+8. **⚠️ 必須分類所有「未分類」的非例行性任務！**
+   - 不要只挑幾個任務，要完整分類所有適合的任務
+   - 已經有專案的任務可以跳過
+   - 例行性任務（每日/每週/每月）可以跳過
+   - 其他所有任務都應該給出分類建議
+9. **必須回傳 JSON 格式，type 必須是 "task_categorization"！**
+
 如果是一般對話，回應格式：
 \`\`\`json
 {
@@ -808,10 +876,10 @@ export function generateCalendarContext(tasks: Array<{
     context += `### ⚠️ 逾期任務（${overdueTasks.length} 項）\n`
     overdueTasks.forEach(task => {
       const dueStr = task.dueDate ? new Date(task.dueDate).toISOString().split('T')[0] : ''
-      context += `- [${task.status === 'completed' ? '✓' : '○'}] ${task.title}`
+      context += `- [${task.status === 'completed' ? '✓' : '○'}] (ID: ${task.id}) ${task.title}`
       if (task.assignee) context += ` (@${task.assignee})`
       if (dueStr) context += ` - 原截止：${dueStr}`
-      if (task.project) context += ` [${task.project}]`
+      if (task.project) context += ` [專案: ${task.project}]`
       context += '\n'
     })
     context += '\n'
@@ -835,11 +903,11 @@ export function generateCalendarContext(tasks: Array<{
       context += `\n**${date}${dayLabel}** - ${dateTasks.length} 項任務\n`
       dateTasks.forEach(task => {
         const statusIcon = task.status === 'completed' ? '✓' : task.status === 'in_progress' ? '⏳' : '○'
-        context += `- [${statusIcon}] ${task.title}`
+        context += `- [${statusIcon}] (ID: ${task.id}) ${task.title}`
         if (task.priority === 'urgent') context += ' 🔴'
         else if (task.priority === 'high') context += ' 🟠'
         if (task.assignee) context += ` (@${task.assignee})`
-        if (task.project) context += ` [${task.project}]`
+        if (task.project) context += ` [專案: ${task.project}]`
         context += '\n'
       })
     })
@@ -850,11 +918,11 @@ export function generateCalendarContext(tasks: Array<{
     context += `\n### 📝 無截止日任務（${noDueDateTasks.length} 項）\n`
     noDueDateTasks.filter(t => t.status !== 'completed').forEach(task => {
       const statusIcon = task.status === 'in_progress' ? '⏳' : '○'
-      context += `- [${statusIcon}] ${task.title}`
+      context += `- [${statusIcon}] (ID: ${task.id}) ${task.title}`
       if (task.priority === 'urgent') context += ' 🔴'
       else if (task.priority === 'high') context += ' 🟠'
       if (task.assignee) context += ` (@${task.assignee})`
-      if (task.project) context += ` [${task.project}]`
+      if (task.project) context += ` [專案: ${task.project}]`
       context += '\n'
     })
   }
@@ -889,20 +957,143 @@ export function generateCalendarContext(tasks: Array<{
     })
   }
 
-  context += `\n---\n\n## ⚠️ 重要規則：不要重複建立任務！\n\n`
-  context += `你可以看到使用者目前所有的任務列表。請遵守以下規則：\n\n`
-  context += `1. **不要重複**：上面列出的任務都已經存在，不要再次產出相同或類似的任務\n`
-  context += `2. **檢查標題**：在產出任何新任務前，先檢查是否已有類似任務\n`
-  context += `3. **參考現有**：規劃時程時，要考慮已有的任務安排，避免衝突\n`
-  context += `4. **補充而非覆蓋**：只產出「新的」、「還沒有的」任務\n\n`
+  // 依專案分組
+  const tasksByProject: Record<string, typeof tasks> = {}
+  tasks.filter(t => t.status !== 'completed').forEach(task => {
+    const project = task.project || '未分類'
+    if (!tasksByProject[project]) {
+      tasksByProject[project] = []
+    }
+    tasksByProject[project].push(task)
+  })
+
+  const projectsWithTasks = Object.keys(tasksByProject).filter(p => p !== '未分類')
+  if (projectsWithTasks.length > 0) {
+    context += `\n### 📁 依專案分類\n`
+    Object.entries(tasksByProject).forEach(([project, projectTasks]) => {
+      if (project !== '未分類') {
+        context += `- **${project}**：${projectTasks.length} 項任務\n`
+      }
+    })
+    if (tasksByProject['未分類']?.length > 0) {
+      context += `- *未分類*：${tasksByProject['未分類'].length} 項任務\n`
+    }
+  }
+
+  context += `\n---\n\n## ⚠️⚠️⚠️ 重要規則：避免重複建立任務！\n\n`
+  context += `你可以看到使用者目前所有的任務列表。**必須嚴格遵守以下去重規則**：\n\n`
+  context += `### 1. 不要重複建立任務\n`
+  context += `- 上面列出的任務都已經存在，不要再次產出相同或類似的任務\n`
+  context += `- 在產出任何新任務前，先逐一比對現有任務標題\n\n`
+  context += `### 2. 相似任務判斷標準（符合任一條就視為重複）\n`
+  context += `- **完全相同**：標題一模一樣\n`
+  context += `- **核心動作相同**：例如「分析電訪名單來源與成交金額」和「分析電訪名單來源與成交質量」是同一件事\n`
+  context += `- **主要對象相同**：例如「建立高音終極方程式V2銷售頁面」和「製作高音終極方程式銷售頁」是同一件事\n`
+  context += `- **50% 以上關鍵字重疊**：如果兩個任務有一半以上的關鍵字相同，視為重複\n\n`
+  context += `### 3. 發現潛在重複時的處理方式\n`
+  context += `如果在逐字稿中發現的任務「可能」與現有任務重複，請：\n`
+  context += `- **不要**萃取為新任務\n`
+  context += `- 在 message 中說明：「⚠️ 發現『XXX』可能與現有任務『YYY』重複，已略過」\n\n`
+  context += `### 4. 範例\n`
+  context += `❌ 錯誤：現有「分析電訪名單來源」，又萃取「分析電訪名單來源與成交質量」\n`
+  context += `✅ 正確：發現重複，在 message 說明已略過\n\n`
+  context += `❌ 錯誤：現有「建立高音終極方程式V2銷售頁面」，又萃取「製作高音終極方程式銷售頁」\n`
+  context += `✅ 正確：發現重複，在 message 說明已略過\n\n`
   context += `當使用者詢問任務相關問題（如「我今天要做什麼」「哪些任務快到期」「幫我整理一下任務」等），請根據以上任務資料提供建議。\n`
 
   return context
 }
 
+// 生成可用專案列表上下文
+export function generateProjectsContext(projects: Array<{
+  id: string
+  name: string
+  description?: string
+  status: 'active' | 'completed' | 'archived'
+}>): string {
+  const activeProjects = projects.filter(p => p.status === 'active')
+
+  let context = `\n## 📁 專案管理\n\n`
+
+  if (activeProjects.length > 0) {
+    context += `### 現有專案\n`
+    context += `以下是目前已建立的專案：\n\n`
+
+    activeProjects.forEach(project => {
+      context += `- **${project.name}**`
+      if (project.description) {
+        context += `：${project.description}`
+      }
+      context += '\n'
+    })
+    context += '\n'
+  }
+
+  context += `### 專案分配規則\n\n`
+  context += `1. **使用現有專案**：如果任務明顯屬於上述某個專案，請在任務的 \`project\` 欄位填入該專案名稱\n`
+  context += `2. **建立新專案**：如果任務群組明顯屬於一個新的主題/專案（如新產品開發、新活動規劃等），且現有專案都不適合，可以建議新專案\n`
+  context += `3. **不指定專案**：如果任務是零散的、不屬於任何專案，請將 \`project\` 欄位留空\n\n`
+
+  context += `### 建議新專案格式\n\n`
+  context += `如果需要建立新專案，請在 JSON 回應中加入 \`suggested_projects\` 陣列：\n`
+  context += `\`\`\`json\n`
+  context += `{\n`
+  context += `  "type": "tasks_extracted",\n`
+  context += `  "suggested_projects": [\n`
+  context += `    { "name": "專案名稱", "description": "專案描述（選填）" }\n`
+  context += `  ],\n`
+  context += `  "tasks": [...],\n`
+  context += `  "message": "..."\n`
+  context += `}\n`
+  context += `\`\`\`\n\n`
+  context += `**注意**：只有在任務明確需要新專案時才建議，不要為每個任務都建立專案。\n\n`
+
+  context += `### 🔄 任務分類功能\n\n`
+  context += `當使用者要求「幫我分類任務」、「自動歸類任務」、「把任務整理到專案」或類似請求時，\n`
+  context += `請使用 **task_categorization** 類型回應，分析現有任務並建議專案分類：\n\n`
+  context += `\`\`\`json\n`
+  context += `{\n`
+  context += `  "type": "task_categorization",\n`
+  context += `  "suggested_projects": [\n`
+  context += `    { "name": "新專案名稱", "description": "專案描述" }\n`
+  context += `  ],\n`
+  context += `  "categorizations": [\n`
+  context += `    {\n`
+  context += `      "task_id": "任務ID",\n`
+  context += `      "task_title": "任務標題",\n`
+  context += `      "current_project": "目前專案名稱或null",\n`
+  context += `      "suggested_project": "建議的專案名稱",\n`
+  context += `      "reason": "分類理由（簡短說明）"\n`
+  context += `    }\n`
+  context += `  ],\n`
+  context += `  "message": "給使用者的說明訊息"\n`
+  context += `}\n`
+  context += `\`\`\`\n\n`
+  context += `**分類規則（非常重要！）**：\n`
+  context += `1. **必須分類所有「未分類」的非例行性任務！** 不要只挑幾個，要完整分類\n`
+  context += `2. 跳過的任務類型：\n`
+  context += `   - 已經有專案的任務（已分類）\n`
+  context += `   - 例行性任務（標題有「每日」「每週」「每月」）\n`
+  context += `   - 已完成的任務\n`
+  context += `3. **其他所有未分類任務都必須給出分類建議！**\n`
+  context += `4. 專案名稱要具體！直接用任務中的產品名稱，不要發明泛稱\n`
+  context += `5. 如果現有專案都不適合，建議新專案（名稱要具體！）\n`
+
+  return context
+}
+
+// 任務分類建議的類型
+export interface TaskCategorization {
+  task_id: string
+  task_title: string
+  current_project: string | null
+  suggested_project: string
+  reason: string
+}
+
 // 解析 AI 回應
 export function parseAIResponse(response: string): {
-  type: 'tasks_extracted' | 'chat'
+  type: 'tasks_extracted' | 'task_categorization' | 'chat'
   tasks?: Array<{
     title: string
     description?: string
@@ -912,6 +1103,11 @@ export function parseAIResponse(response: string): {
     project?: string
     group?: string
   }>
+  suggested_projects?: Array<{
+    name: string
+    description?: string
+  }>
+  categorizations?: TaskCategorization[]
   message: string
 } {
   try {

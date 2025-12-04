@@ -1,12 +1,12 @@
 import { NextRequest } from 'next/server'
-import openai, { getFullSystemPrompt, getMeetingTranscriptPrompt, isLongMeetingTranscript, generateCalendarContext } from '@/lib/openai'
+import openai, { getFullSystemPrompt, getMeetingTranscriptPrompt, isLongMeetingTranscript, generateCalendarContext, generateProjectsContext } from '@/lib/openai'
 import { generatePreferencePrompt, shouldInjectPreferences } from '@/lib/preferences'
 import { generateFewShotPrompt } from '@/lib/few-shot-learning'
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { messages, image, calendarTasks, userInfo } = body
+    const { messages, image, calendarTasks, userInfo, projects } = body
 
     // 取得最後一條使用者訊息
     const lastUserMessage = messages.filter((m: { role: string }) => m.role === 'user').pop()
@@ -58,6 +58,14 @@ export async function POST(request: NextRequest) {
       const calendarContext = generateCalendarContext(calendarTasks)
       if (calendarContext) {
         systemPrompt += '\n' + calendarContext
+      }
+    }
+
+    // 注入專案上下文（讓 AI 知道可用的專案）
+    if (projects && projects.length > 0) {
+      const projectsContext = generateProjectsContext(projects)
+      if (projectsContext) {
+        systemPrompt += '\n' + projectsContext
       }
     }
 

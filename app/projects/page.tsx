@@ -5,30 +5,45 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { useAppStore, type AppState, type Task, type Project } from '@/lib/store'
+import { useSupabaseProjects, type Project } from '@/lib/useSupabaseProjects'
+import { useSupabaseTasks, type Task } from '@/lib/useSupabaseTasks'
 import { format } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
-import { Plus, Trash2, FolderKanban, Edit2, Check, X } from 'lucide-react'
+import { Plus, Trash2, FolderKanban, Edit2, Check, X, Loader2, RefreshCw } from 'lucide-react'
 
 export default function ProjectsPage() {
-  const projects = useAppStore((state: AppState) => state.projects)
-  const tasks = useAppStore((state: AppState) => state.tasks)
-  const addProject = useAppStore((state: AppState) => state.addProject)
-  const updateProject = useAppStore((state: AppState) => state.updateProject)
-  const deleteProject = useAppStore((state: AppState) => state.deleteProject)
+  const {
+    projects,
+    loading,
+    error,
+    addProject,
+    updateProject,
+    deleteProject,
+    refresh,
+  } = useSupabaseProjects()
+
+  const { tasks } = useSupabaseTasks()
 
   const [newProjectName, setNewProjectName] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
+  const [isAdding, setIsAdding] = useState(false)
 
-  const handleAddProject = () => {
+  const handleAddProject = async () => {
     if (!newProjectName.trim()) return
-    addProject({
-      name: newProjectName.trim(),
-      status: 'active',
-      progress: 0,
-    })
-    setNewProjectName('')
+    try {
+      setIsAdding(true)
+      await addProject({
+        name: newProjectName.trim(),
+        status: 'active',
+        progress: 0,
+      })
+      setNewProjectName('')
+    } catch (err) {
+      console.error('新增專案失敗:', err)
+    } finally {
+      setIsAdding(false)
+    }
   }
 
   const handleStartEdit = (id: string, name: string) => {
@@ -36,9 +51,13 @@ export default function ProjectsPage() {
     setEditingName(name)
   }
 
-  const handleSaveEdit = (id: string) => {
+  const handleSaveEdit = async (id: string) => {
     if (editingName.trim()) {
-      updateProject(id, { name: editingName.trim() })
+      try {
+        await updateProject(id, { name: editingName.trim() })
+      } catch (err) {
+        console.error('更新專案失敗:', err)
+      }
     }
     setEditingId(null)
     setEditingName('')
@@ -47,6 +66,14 @@ export default function ProjectsPage() {
   const handleCancelEdit = () => {
     setEditingId(null)
     setEditingName('')
+  }
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteProject(id)
+    } catch (err) {
+      console.error('刪除專案失敗:', err)
+    }
   }
 
   // 計算專案的任務統計
@@ -67,8 +94,25 @@ export default function ProjectsPage() {
     <div className="flex-1 overflow-y-auto">
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">📁 專案管理</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold">📁 專案管理</h1>
+            <button
+              onClick={refresh}
+              disabled={loading}
+              className="p-1.5 rounded-md hover:bg-gray-100 text-muted-foreground hover:text-foreground transition-colors"
+              title="重新整理"
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
+
+        {error && (
+          <div className="bg-destructive/10 text-destructive p-4 rounded-lg">
+            {error}
+            <Button variant="link" className="ml-2" onClick={refresh}>重試</Button>
+          </div>
+        )}
 
         {/* 新增專案 */}
         <Card>
@@ -79,17 +123,30 @@ export default function ProjectsPage() {
                 onChange={(e) => setNewProjectName(e.target.value)}
                 placeholder="輸入專案名稱..."
                 onKeyDown={(e) => e.key === 'Enter' && handleAddProject()}
+                disabled={isAdding}
               />
-              <Button onClick={handleAddProject}>
-                <Plus className="h-4 w-4 mr-1" />
+              <Button onClick={handleAddProject} disabled={isAdding || !newProjectName.trim()}>
+                {isAdding ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4 mr-1" />
+                )}
                 新增專案
               </Button>
             </div>
           </CardContent>
         </Card>
 
+        {/* 載入中 */}
+        {loading && projects.length === 0 && (
+          <div className="text-center py-12 text-muted-foreground">
+            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
+            <p>正在載入專案...</p>
+          </div>
+        )}
+
         {/* 專案列表 */}
-        {projects.length === 0 ? (
+        {!loading && projects.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
             <FolderKanban className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p>尚未建立任何專案</p>
@@ -152,7 +209,7 @@ export default function ProjectsPage() {
                               size="icon"
                               variant="ghost"
                               className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                              onClick={() => deleteProject(project.id)}
+                              onClick={() => handleDelete(project.id)}
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>

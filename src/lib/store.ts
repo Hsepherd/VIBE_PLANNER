@@ -102,7 +102,7 @@ export interface AppState {
 
   // 待確認任務群組（每次萃取是獨立群組）
   pendingTaskGroups: PendingTaskGroup[]
-  addPendingTaskGroup: (tasks: ExtractedTask[], sourceContext?: string) => void
+  addPendingTaskGroup: (tasks: ExtractedTask[], sourceContext?: string, duplicateWarnings?: string[]) => void
   updatePendingTaskGroup: (groupId: string, tasks: ExtractedTask[]) => void
   updatePendingTask: (groupId: string, taskIndex: number, updates: Partial<ExtractedTask>) => void
   removePendingTaskGroup: (groupId: string) => void
@@ -122,6 +122,12 @@ export interface AppState {
   // AI 學習偏好
   lastInputContext: string  // 最後一次輸入的上下文（用於學習）
   setLastInputContext: (context: string) => void
+
+  // 待確認任務分類（批次更新專案）
+  pendingCategorizations: PendingCategorizationGroup | null
+  setPendingCategorizations: (group: PendingCategorizationGroup | null) => void
+  updateCategorizationSelection: (taskId: string, selected: boolean) => void
+  clearPendingCategorizations: () => void
 }
 
 // AI 萃取任務的類型
@@ -143,6 +149,7 @@ export interface PendingTaskGroup {
   timestamp: Date
   tasks: ExtractedTask[]
   sourceContext?: string  // 來源逐字稿片段
+  duplicateWarnings?: string[]  // 被過濾掉的重複任務警告
 }
 
 // 已處理任務的狀態
@@ -157,6 +164,24 @@ export interface ProcessedTaskGroup {
   timestamp: Date
   tasks: ProcessedTask[]
   sourceContext?: string  // 來源上下文（逐字稿片段）
+}
+
+// 任務分類建議（用於批次更新專案）
+export interface TaskCategorizationItem {
+  task_id: string
+  task_title: string
+  current_project: string | null
+  suggested_project: string
+  reason: string
+  selected: boolean  // 使用者是否選擇套用此分類
+}
+
+// 待確認分類群組
+export interface PendingCategorizationGroup {
+  id: string
+  timestamp: Date
+  categorizations: TaskCategorizationItem[]
+  suggested_projects: Array<{ name: string; description?: string }>
 }
 
 // 生成 UUID
@@ -320,7 +345,7 @@ export const useAppStore = create<AppState>()(
 
       // 待確認任務群組
       pendingTaskGroups: [],
-      addPendingTaskGroup: (tasks, sourceContext) =>
+      addPendingTaskGroup: (tasks, sourceContext, duplicateWarnings) =>
         set((state) => ({
           pendingTaskGroups: [
             ...state.pendingTaskGroups,
@@ -329,6 +354,7 @@ export const useAppStore = create<AppState>()(
               timestamp: new Date(),
               tasks,
               sourceContext,
+              duplicateWarnings,
             },
           ],
         })),
@@ -362,7 +388,8 @@ export const useAppStore = create<AppState>()(
       // 向下相容（舊版，已棄用）
       pendingTasks: [],
       setPendingTasks: (tasks) => set({ pendingTasks: tasks }),
-      clearPendingTasks: () => set({ pendingTasks: [], pendingTaskGroups: [] }),
+      // 清除所有待確認任務和已處理任務歷史（用於切換/建立對話時）
+      clearPendingTasks: () => set({ pendingTasks: [], pendingTaskGroups: [], processedTaskGroups: [], pendingCategorizations: null }),
 
       // 已處理任務歷史
       processedTaskGroups: [],
@@ -396,6 +423,22 @@ export const useAppStore = create<AppState>()(
       // AI 學習偏好
       lastInputContext: '',
       setLastInputContext: (context) => set({ lastInputContext: context }),
+
+      // 待確認任務分類
+      pendingCategorizations: null,
+      setPendingCategorizations: (group) => set({ pendingCategorizations: group }),
+      updateCategorizationSelection: (taskId, selected) =>
+        set((state) => ({
+          pendingCategorizations: state.pendingCategorizations
+            ? {
+                ...state.pendingCategorizations,
+                categorizations: state.pendingCategorizations.categorizations.map((item) =>
+                  item.task_id === taskId ? { ...item, selected } : item
+                ),
+              }
+            : null,
+        })),
+      clearPendingCategorizations: () => set({ pendingCategorizations: null }),
     }),
     {
       name: 'vibe-planner-storage',

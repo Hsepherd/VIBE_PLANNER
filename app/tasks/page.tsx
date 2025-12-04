@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -27,6 +27,7 @@ import {
 import { Calendar as CalendarComponent } from '@/components/ui/calendar'
 import { DateTimePicker } from '@/components/ui/datetime-picker'
 import { useSupabaseTasks, type Task, type RecurrenceType } from '@/lib/useSupabaseTasks'
+import { useSupabaseProjects, type Project } from '@/lib/useSupabaseProjects'
 import type { RecurrenceConfig } from '@/lib/supabase-api'
 import { RecurrenceSelector, RecurrenceBadge } from '@/components/task/RecurrenceSelector'
 import { getTeamMembers, addTeamMember, removeTeamMember } from '@/lib/team-members'
@@ -65,6 +66,7 @@ import {
   Loader2,
   User,
   FolderOpen,
+  FolderKanban,
   FileText,
   MessageSquareQuote,
   ListChecks,
@@ -84,7 +86,7 @@ import {
   Undo2,
 } from 'lucide-react'
 
-type SortMode = 'priority' | 'dueDate' | 'assignee' | 'tag' | 'group'
+type SortMode = 'priority' | 'dueDate' | 'assignee' | 'tag' | 'group' | 'project'
 
 // 優先級設定
 const priorityConfig = {
@@ -198,6 +200,7 @@ function TaskDetailDialog({
   availableGroups,
   onAddGroup,
   onRemoveGroup,
+  projects,
 }: {
   task: Task | null
   onClose: () => void
@@ -212,6 +215,7 @@ function TaskDetailDialog({
   availableGroups: Group[]
   onAddGroup: (name: string, color: string) => void
   onRemoveGroup: (name: string) => void
+  projects: Project[]
 }) {
   // 本地狀態用於編輯
   const [localTask, setLocalTask] = useState<Task | null>(null)
@@ -465,6 +469,23 @@ function TaskDetailDialog({
                 </span>
               )}
 
+              {/* 專案 */}
+              {localTask.projectId && (() => {
+                const project = projects.find(p => p.id === localTask.projectId)
+                return project ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-violet-50 text-violet-700">
+                    <FolderKanban className="h-3 w-3" />
+                    {project.name}
+                    <button
+                      onClick={() => handleUpdate({ projectId: undefined })}
+                      className="hover:opacity-70"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ) : null
+              })()}
+
               {/* 標籤 */}
               {(localTask.tags || []).map((tagName) => {
                 const colors = getTagColor(tagName)
@@ -580,6 +601,34 @@ function TaskDetailDialog({
                       </DropdownMenuItem>
                     </>
                   )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              {/* 選擇專案 */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border border-dashed border-gray-300 text-gray-500 hover:border-gray-400 hover:text-gray-700 transition-colors">
+                    <FolderKanban className="h-3 w-3" />
+                    {localTask.projectId ? '更換專案' : '專案'}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-48">
+                  <DropdownMenuItem onClick={() => handleUpdate({ projectId: undefined })} className="text-muted-foreground">
+                    <X className="h-4 w-4 mr-2" />
+                    不指定
+                  </DropdownMenuItem>
+                  {projects.length > 0 && <DropdownMenuSeparator />}
+                  {projects.filter(p => p.status === 'active').map((project) => (
+                    <DropdownMenuItem
+                      key={project.id}
+                      onClick={() => handleUpdate({ projectId: project.id })}
+                      className={localTask.projectId === project.id ? 'bg-muted' : ''}
+                    >
+                      <FolderKanban className="h-4 w-4 mr-2 text-violet-500" />
+                      {project.name}
+                      {localTask.projectId === project.id && <Check className="h-4 w-4 ml-auto" />}
+                    </DropdownMenuItem>
+                  ))}
                 </DropdownMenuContent>
               </DropdownMenu>
 
@@ -989,6 +1038,7 @@ function AssigneeDropdown({
 
 export default function TasksPage() {
   const { tasks, isLoading, error, addTask, updateTask, deleteTask, completeTask, refresh } = useSupabaseTasks()
+  const { projects, addProject: addProjectToDb, deleteProject: deleteProjectFromDb } = useSupabaseProjects()
 
   const [newTaskTitle, setNewTaskTitle] = useState('')
   const [filter, setFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed'>('all')
@@ -998,6 +1048,7 @@ export default function TasksPage() {
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [assigneeFilter, setAssigneeFilter] = useState<string | null>(null)
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
+  const [projectFilter, setProjectFilter] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
   // 批次選取狀態
@@ -1013,8 +1064,24 @@ export default function TasksPage() {
     changes: Array<{ taskId: string; previousState: Partial<Task> }>
     description: string
   }>>([])
-  // 舊版相容
   const canUndo = undoHistory.length > 0
+
+  // 復原按鈕顯示狀態（操作後短暫顯示，5秒後自動隱藏）
+  const [showUndoButton, setShowUndoButton] = useState(false)
+  const undoTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  // 顯示復原按鈕（帶自動隱藏計時器）
+  const showUndoButtonWithTimer = useCallback(() => {
+    setShowUndoButton(true)
+    // 清除之前的計時器
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current)
+    }
+    // 5秒後自動隱藏
+    undoTimerRef.current = setTimeout(() => {
+      setShowUndoButton(false)
+    }, 5000)
+  }, [])
 
   // 團隊成員
   const [teamMembers, setTeamMembers] = useState<string[]>([])
@@ -1084,6 +1151,9 @@ export default function TasksPage() {
       // 組別過濾
       if (groupFilter && task.groupName !== groupFilter) return false
 
+      // 專案過濾
+      if (projectFilter && task.projectId !== projectFilter) return false
+
       // 搜尋過濾
       if (query) {
         const titleMatch = task.title.toLowerCase().includes(query)
@@ -1103,7 +1173,7 @@ export default function TasksPage() {
 
       return true
     })
-  }, [tasks, filter, tagFilter, assigneeFilter, groupFilter, searchQuery])
+  }, [tasks, filter, tagFilter, assigneeFilter, groupFilter, projectFilter, searchQuery])
 
   const completedTasks = useMemo(() => tasks.filter((t: Task) => t.status === 'completed'), [tasks])
 
@@ -1133,6 +1203,22 @@ export default function TasksPage() {
     })
     return Array.from(groupSet)
   }, [tasks])
+
+  // 取得所有使用中的專案
+  const usedProjects = useMemo(() => {
+    const projectIds = new Set<string>()
+    tasks.forEach(task => {
+      if (task.projectId) projectIds.add(task.projectId)
+    })
+    return projects.filter(p => projectIds.has(p.id))
+  }, [tasks, projects])
+
+  // 根據 projectId 取得專案名稱
+  const getProjectName = useCallback((projectId: string | undefined) => {
+    if (!projectId) return undefined
+    const project = projects.find(p => p.id === projectId)
+    return project?.name
+  }, [projects])
 
   // 按截止日期分組（按實際日期分類）
   const today = startOfDay(new Date())
@@ -1235,6 +1321,17 @@ export default function TasksPage() {
     return groups
   }, [filteredTasks])
 
+  // 依專案分組
+  const groupedByProject = useMemo(() => {
+    const projectGroups: Record<string, Task[]> = { '未分類': [] }
+    filteredTasks.forEach((task: Task) => {
+      const projectName = getProjectName(task.projectId) || '未分類'
+      if (!projectGroups[projectName]) projectGroups[projectName] = []
+      projectGroups[projectName].push(task)
+    })
+    return projectGroups
+  }, [filteredTasks, getProjectName])
+
   // 新增任務
   const handleAddTask = async () => {
     if (!newTaskTitle.trim()) return
@@ -1278,10 +1375,12 @@ export default function TasksPage() {
           changes: [{ taskId: id, previousState }],
           description: `修改${changedFields}`,
         }])
+        // 顯示復原按鈕
+        showUndoButtonWithTimer()
       }
     }
     await updateTask(id, updates)
-  }, [updateTask, tasks])
+  }, [updateTask, tasks, showUndoButtonWithTimer])
 
   // 批次選取功能（支援 Shift 範圍選取）
   const toggleTaskSelection = useCallback((taskId: string, shiftKey: boolean = false) => {
@@ -1386,13 +1485,15 @@ export default function TasksPage() {
       changes: backupStates,
       description: `批次修改 ${selectedTaskIds.size} 個任務的${changedFields}`,
     }])
+    // 顯示復原按鈕
+    showUndoButtonWithTimer()
 
     // 執行更新
     for (const taskId of selectedTaskIds) {
       await updateTask(taskId, updates)
     }
     setShowBatchEditDialog(false)
-  }, [selectedTaskIds, updateTask, tasks])
+  }, [selectedTaskIds, updateTask, tasks, showUndoButtonWithTimer])
 
   // 批次完成（支援復原）
   const handleBatchComplete = useCallback(async () => {
@@ -1414,13 +1515,15 @@ export default function TasksPage() {
       changes: backupStates,
       description: `批次完成 ${selectedTaskIds.size} 個任務`,
     }])
+    // 顯示復原按鈕
+    showUndoButtonWithTimer()
 
     // 執行完成
     for (const taskId of selectedTaskIds) {
       await completeTask(taskId)
     }
     setSelectedTaskIds(new Set())
-  }, [selectedTaskIds, completeTask, tasks])
+  }, [selectedTaskIds, completeTask, tasks, showUndoButtonWithTimer])
 
   // 復原上一步操作
   const handleUndo = useCallback(async () => {
@@ -1436,7 +1539,46 @@ export default function TasksPage() {
 
     // 移除已復原的操作
     setUndoHistory(prev => prev.slice(0, -1))
-  }, [undoHistory, updateTask])
+    // 如果還有更多可復原的操作，繼續顯示按鈕
+    if (undoHistory.length > 1) {
+      showUndoButtonWithTimer()
+    } else {
+      setShowUndoButton(false)
+    }
+  }, [undoHistory, updateTask, showUndoButtonWithTimer])
+
+  // Cmd+Z / Ctrl+Z 快捷鍵支援
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 檢查是否在輸入框中
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return
+      }
+
+      // Cmd+Z (Mac) 或 Ctrl+Z (Windows/Linux)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        if (canUndo) {
+          e.preventDefault()
+          // 顯示按鈕並執行復原
+          setShowUndoButton(true)
+          handleUndo()
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [canUndo, handleUndo])
+
+  // 清理計時器
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current) {
+        clearTimeout(undoTimerRef.current)
+      }
+    }
+  }, [])
 
   // 狀態顏色對應
   const statusColors: Record<string, { bg: string; border: string; text: string; dotBg: string }> = {
@@ -1559,6 +1701,7 @@ export default function TasksPage() {
     const [assigneeOpen, setAssigneeOpen] = useState(false)
     const [groupOpen, setGroupOpen] = useState(false)
     const [tagOpen, setTagOpen] = useState(false)
+    const [projectOpen, setProjectOpen] = useState(false)
     const [priorityOpen, setPriorityOpen] = useState(false)
     const [statusOpen, setStatusOpen] = useState(false)
     const isSelected = selectedTaskIds.has(task.id)
@@ -1771,6 +1914,26 @@ export default function TasksPage() {
                   })}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { tags: [] })}>清除標籤</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {/* 專案 */}
+              <DropdownMenu open={projectOpen} onOpenChange={setProjectOpen}>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex items-center w-full px-2 py-1.5 text-xs hover:bg-gray-100 rounded">
+                    <FolderKanban className="h-3.5 w-3.5 mr-2" />
+                    專案：{getProjectName(task.projectId) || '無'}
+                    <ChevronRight className="h-3 w-3 ml-auto" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="left" className="w-40">
+                  {projects.filter(p => p.status === 'active').map((project) => (
+                    <DropdownMenuItem key={project.id} onClick={() => handleUpdateTask(task.id, { projectId: project.id })} className="text-xs">
+                      <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />{project.name}
+                      {task.projectId === project.id && <Check className="h-3 w-3 ml-auto" />}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { projectId: undefined })}>清除專案</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
               <DropdownMenuSeparator />
@@ -2111,6 +2274,11 @@ export default function TasksPage() {
                   組別
                   {sortMode === 'group' && <Check className="h-4 w-4 ml-auto" />}
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSortMode('project')}>
+                  <FolderKanban className="h-4 w-4 mr-2" />
+                  專案
+                  {sortMode === 'project' && <Check className="h-4 w-4 ml-auto" />}
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
 
@@ -2169,6 +2337,23 @@ export default function TasksPage() {
                     </DropdownMenuItem>
                   )
                 })}
+                {usedProjects.length > 0 && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <div className="px-2 py-1.5 text-sm font-medium text-muted-foreground">專案</div>
+                    <DropdownMenuItem onClick={() => setProjectFilter(null)} className={!projectFilter ? 'bg-muted' : ''}>
+                      全部
+                      {!projectFilter && <Check className="h-4 w-4 ml-auto" />}
+                    </DropdownMenuItem>
+                    {usedProjects.map(project => (
+                      <DropdownMenuItem key={project.id} onClick={() => setProjectFilter(project.id)} className={projectFilter === project.id ? 'bg-muted' : ''}>
+                        <FolderKanban className="h-3 w-3 mr-1.5 text-muted-foreground" />
+                        {project.name}
+                        {projectFilter === project.id && <Check className="h-4 w-4 ml-auto" />}
+                      </DropdownMenuItem>
+                    ))}
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
 
@@ -2221,6 +2406,13 @@ export default function TasksPage() {
             }, {} as Record<string, { emoji: string; label: string }>)
           )}
 
+          {sortMode === 'project' && renderGroupedTasks(groupedByProject,
+            Object.keys(groupedByProject).reduce((acc, key) => {
+              acc[key] = { emoji: '📁', label: key }
+              return acc
+            }, {} as Record<string, { emoji: string; label: string }>)
+          )}
+
           {filteredTasks.length === 0 && filter !== 'completed' && (
             <div className="text-center py-12 text-muted-foreground">
               <p className="text-4xl mb-4">🎉</p>
@@ -2269,6 +2461,7 @@ export default function TasksPage() {
         availableGroups={availableGroups}
         onAddGroup={handleAddGroup}
         onRemoveGroup={handleRemoveGroup}
+        projects={projects}
       />
 
       {/* 底部固定批次操作工具列 */}
@@ -2492,13 +2685,17 @@ export default function TasksPage() {
         </div>
       )}
 
-      {/* 浮動復原按鈕（當沒有選取任務時顯示） */}
-      {canUndo && selectedTaskIds.size === 0 && (
-        <div className="fixed bottom-6 right-6 z-50">
+      {/* 浮動復原按鈕（操作後短暫顯示，5秒後自動隱藏，支援 Cmd+Z） */}
+      {showUndoButton && canUndo && selectedTaskIds.size === 0 && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
           <button
-            onClick={handleUndo}
+            onClick={() => {
+              handleUndo()
+              // 點擊後重設計時器
+              showUndoButtonWithTimer()
+            }}
             className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 text-white hover:bg-amber-600 rounded-full shadow-lg transition-all hover:scale-105"
-            title={undoHistory.length > 0 ? `復原: ${undoHistory[undoHistory.length - 1].description}` : '復原'}
+            title={`復原: ${undoHistory[undoHistory.length - 1]?.description || ''} (⌘Z)`}
           >
             <Undo2 className="h-4 w-4" />
             <span className="text-sm font-medium">復原</span>

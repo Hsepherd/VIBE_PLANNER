@@ -1,8 +1,9 @@
 'use client'
 
 import { useRef, useEffect, useState, useMemo } from 'react'
-import { useAppStore, type AppState, type Message, type ProcessedTask, type ProcessedTaskGroup, type PendingTaskGroup, type ExtractedTask } from '@/lib/store'
+import { useAppStore, type AppState, type Message, type ProcessedTask, type ProcessedTaskGroup, type PendingTaskGroup, type ExtractedTask, type PendingCategorizationGroup, type TaskCategorizationItem } from '@/lib/store'
 import { useSupabaseTasks } from '@/lib/useSupabaseTasks'
+import { useSupabaseProjects } from '@/lib/useSupabaseProjects'
 import MessageBubble from './MessageBubble'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -16,7 +17,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Check, X, CheckSquare, Square, Clock, Loader2, Eye, ThumbsUp, ThumbsDown, Pencil, RefreshCw } from 'lucide-react'
+import { Check, X, CheckSquare, Square, Clock, Loader2, Eye, ThumbsUp, ThumbsDown, Pencil, RefreshCw, AlertTriangle } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import {
   Popover,
@@ -120,7 +121,15 @@ export default function ChatWindow() {
   const updateTaskFeedback = useAppStore((state: AppState) => state.updateTaskFeedback)
 
   // 使用 Supabase 任務 API（同步到雲端）
-  const { addTask: addTaskToSupabase } = useSupabaseTasks()
+  const { addTask: addTaskToSupabase, updateTask: updateTaskInSupabase, tasks: supabaseTasks } = useSupabaseTasks()
+
+  // 專案相關
+  const { projects, addProject, refresh: refreshProjects } = useSupabaseProjects()
+
+  // 待確認分類
+  const pendingCategorizations = useAppStore((state: AppState) => state.pendingCategorizations)
+  const updateCategorizationSelection = useAppStore((state: AppState) => state.updateCategorizationSelection)
+  const clearPendingCategorizations = useAppStore((state: AppState) => state.clearPendingCategorizations)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -546,6 +555,75 @@ ${group.sourceContext}
     }
   }
 
+  // 確認套用分類
+  const handleConfirmCategorizations = async () => {
+    if (!pendingCategorizations || isSubmitting) return
+    setIsSubmitting(true)
+
+    try {
+      // 建立新專案並收集所有專案（包含新建的）
+      const newProjectsMap = new Map<string, string>() // name -> id
+
+      if (pendingCategorizations.suggested_projects.length > 0) {
+        const existingProjectNames = projects.map(p => p.name.toLowerCase())
+        for (const newProject of pendingCategorizations.suggested_projects) {
+          if (!existingProjectNames.includes(newProject.name.toLowerCase())) {
+            try {
+              const created = await addProject({
+                name: newProject.name,
+                description: newProject.description,
+                status: 'active',
+                progress: 0,
+              })
+              // addProject 回傳新建的專案，把 ID 記錄下來
+              if (created) {
+                newProjectsMap.set(newProject.name, created.id)
+              }
+            } catch (err) {
+              console.error(`建立專案 ${newProject.name} 失敗:`, err)
+            }
+          }
+        }
+      }
+
+      // 套用選中的分類
+      const selectedItems = pendingCategorizations.categorizations.filter(item => item.selected)
+
+      for (const item of selectedItems) {
+        // 先從現有專案找，找不到就從新建專案找
+        const existingProject = projects.find(p => p.name === item.suggested_project)
+        const projectId = existingProject?.id || newProjectsMap.get(item.suggested_project)
+
+        if (projectId) {
+          try {
+            await updateTaskInSupabase(item.task_id, { projectId })
+          } catch (err) {
+            console.error(`更新任務 ${item.task_title} 的專案失敗:`, err)
+          }
+        } else {
+          console.warn(`找不到專案 ${item.suggested_project} 的 ID`)
+        }
+      }
+
+      clearPendingCategorizations()
+      // 刷新專案列表以確保 UI 同步
+      await refreshProjects()
+    } catch (err) {
+      console.error('套用分類失敗:', err)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  // 全選/取消全選分類
+  const toggleAllCategorizations = () => {
+    if (!pendingCategorizations) return
+    const allSelected = pendingCategorizations.categorizations.every(item => item.selected)
+    pendingCategorizations.categorizations.forEach(item => {
+      updateCategorizationSelection(item.task_id, !allSelected)
+    })
+  }
+
   return (
     <div
       ref={containerRef}
@@ -694,6 +772,29 @@ ${group.sourceContext}
                           </Button>
                         </div>
                       </div>
+
+                      {/* 重複任務警告 */}
+                      {group.duplicateWarnings && group.duplicateWarnings.length > 0 && (
+                        <div className="mb-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                          <div className="flex items-center gap-2 mb-2">
+                            <AlertTriangle className="h-4 w-4 text-amber-600" />
+                            <span className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                              已過濾 {group.duplicateWarnings.length} 個重複任務
+                            </span>
+                          </div>
+                          <ul className="text-xs text-amber-600 dark:text-amber-500 space-y-1">
+                            {group.duplicateWarnings.slice(0, 3).map((warning, i) => (
+                              <li key={i} className="flex items-start gap-1">
+                                <span>•</span>
+                                <span>{warning}</span>
+                              </li>
+                            ))}
+                            {group.duplicateWarnings.length > 3 && (
+                              <li className="text-amber-500">...還有 {group.duplicateWarnings.length - 3} 個</li>
+                            )}
+                          </ul>
+                        </div>
+                      )}
 
                       <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
                         {group.tasks.map((task, taskIndex) => {
@@ -877,6 +978,127 @@ ${group.sourceContext}
                 )
               }
             })}
+
+            {/* 待確認任務分類 */}
+            {pendingCategorizations && pendingCategorizations.categorizations.length > 0 && (
+              <div className="py-4 px-4">
+                <Card className="p-4 border-2 border-purple-500/50 bg-purple-50/30 dark:bg-purple-950/20 max-w-3xl mx-auto">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <span>📁</span>
+                      <h3 className="font-medium">AI 建議的專案分類</h3>
+                      <Badge variant="secondary" className="text-xs">
+                        {pendingCategorizations.categorizations.length} 個任務
+                      </Badge>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={toggleAllCategorizations}
+                      className="text-xs"
+                    >
+                      {pendingCategorizations.categorizations.every(item => item.selected) ? '取消全選' : '全選'}
+                    </Button>
+                  </div>
+
+                  {/* 建議新增的專案 */}
+                  {pendingCategorizations.suggested_projects.length > 0 && (
+                    <div className="mb-4 p-3 rounded-lg bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-green-600">✨</span>
+                        <span className="text-sm font-medium text-green-700 dark:text-green-400">將建立以下新專案</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {pendingCategorizations.suggested_projects.map((project, i) => (
+                          <Badge key={i} variant="outline" className="bg-green-100 text-green-800 border-green-300">
+                            {project.name}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 分類建議列表 */}
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+                    {pendingCategorizations.categorizations.map((item) => (
+                      <div
+                        key={item.task_id}
+                        onClick={() => updateCategorizationSelection(item.task_id, !item.selected)}
+                        className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                          item.selected
+                            ? 'bg-purple-100/50 dark:bg-purple-900/30 border-purple-300 dark:border-purple-700'
+                            : 'bg-background hover:bg-muted/50 border-muted'
+                        }`}
+                      >
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            updateCategorizationSelection(item.task_id, !item.selected)
+                          }}
+                          className="mt-0.5 shrink-0"
+                        >
+                          {item.selected ? (
+                            <CheckSquare className="h-5 w-5 text-purple-600" />
+                          ) : (
+                            <Square className="h-5 w-5 text-muted-foreground" />
+                          )}
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium">{item.task_title}</p>
+                          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                            {item.current_project ? (
+                              <>
+                                <Badge variant="outline" className="text-xs py-0 bg-gray-50 text-gray-600 border-gray-300">
+                                  📁 {item.current_project}
+                                </Badge>
+                                <span className="text-xs text-muted-foreground">→</span>
+                              </>
+                            ) : (
+                              <>
+                                <Badge variant="outline" className="text-xs py-0 bg-gray-50 text-gray-500 border-gray-300">
+                                  未分類
+                                </Badge>
+                                <span className="text-xs text-muted-foreground">→</span>
+                              </>
+                            )}
+                            <Badge variant="outline" className="text-xs py-0 bg-purple-100 text-purple-700 border-purple-300">
+                              📁 {item.suggested_project}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">{item.reason}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2 mt-4 pt-3 border-t">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={clearPendingCategorizations}
+                      disabled={isSubmitting}
+                      className="flex-1"
+                    >
+                      <X className="h-4 w-4 mr-1" />
+                      取消
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleConfirmCategorizations}
+                      disabled={isSubmitting || !pendingCategorizations.categorizations.some(item => item.selected)}
+                      className="flex-1 bg-purple-600 hover:bg-purple-700"
+                    >
+                      {isSubmitting ? (
+                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                      ) : (
+                        <Check className="h-4 w-4 mr-1" />
+                      )}
+                      套用分類 ({pendingCategorizations.categorizations.filter(item => item.selected).length})
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+            )}
 
             {/* Streaming 內容顯示 */}
             {streamingContent && (
