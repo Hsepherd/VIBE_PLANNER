@@ -30,6 +30,7 @@ const ADMIN_EMAIL = 'xk4xk4563022@gmail.com'
 import { useState, useEffect, useRef, useCallback } from 'react'
 
 const navItems = [
+  { href: '/', label: '對話', icon: MessageSquare },
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/tasks', label: '任務', icon: CheckSquare },
   { href: '/calendar', label: '行事曆', icon: Calendar },

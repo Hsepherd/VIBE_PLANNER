@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import Sidebar, { MobileSidebar, MobileMenuButton } from './Sidebar'
 import { AuthProvider } from '@/components/AuthProvider'
 import { ChatSessionProvider } from '@/lib/ChatSessionContext'
+import { AutoSync } from '@/components/AutoSync'
 
 // 公開頁面不需要顯示側邊欄
 const publicPaths = ['/login', '/signup', '/auth/callback']
@@ -31,6 +32,7 @@ export default function ClientLayout({
   return (
     <AuthProvider>
       <ChatSessionProvider>
+        <AutoSync />
         <div className="flex h-screen">
           {/* 桌面版側邊欄 */}
           <Sidebar />

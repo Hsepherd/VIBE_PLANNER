@@ -184,8 +184,8 @@ export function useSupabaseTasks() {
   }, [tasks])
 
   // 重新載入
-  const refresh = useCallback(() => {
-    loadTasks()
+  const refresh = useCallback(async () => {
+    await loadTasks()
   }, [loadTasks])
 
   return {

@@ -38,7 +38,7 @@ export default function InputArea() {
   } = useChatSessionContext()
 
   // 從 Supabase 取得真實的任務資料（用於 AI 上下文）
-  const { tasks: supabaseTasks } = useSupabaseTasks()
+  const { tasks: supabaseTasks, refresh: refreshTasks } = useSupabaseTasks()
 
   // 取得目前登入使用者資料
   const { user } = useAuth()
@@ -76,6 +76,9 @@ export default function InputArea() {
 
   const handleSubmit = async () => {
     if ((!input.trim() && !imagePreview) || isLoading || isSummarizing) return
+
+    // 在送出前刷新任務列表，確保去重邏輯使用最新資料
+    await refreshTasks()
 
     const userMessage = input.trim() || '請分析這張圖片'
 
@@ -197,13 +200,21 @@ export default function InputArea() {
 
       const decoder = new TextDecoder()
       let fullContent = ''
+      let buffer = '' // 緩衝區用於處理跨 chunk 的行
 
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
+        if (done) {
+          console.log('[InputArea] Stream 結束，fullContent 長度:', fullContent.length)
+          break
+        }
 
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\n')
+        const chunk = decoder.decode(value, { stream: true })
+        buffer += chunk
+        const lines = buffer.split('\n')
+
+        // 保留最後一個不完整的行（如果有的話）
+        buffer = lines.pop() || ''
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
@@ -216,7 +227,36 @@ export default function InputArea() {
               } else if (data.type === 'done') {
                 // 解析完整內容
                 const parsed = parseAIResponse(fullContent)
-                const messageContent = parsed.message || fullContent
+                console.log('[InputArea] 完整回應長度:', fullContent.length)
+                console.log('[InputArea] 解析結果 type:', parsed.type)
+                console.log('[InputArea] 解析結果 tasks 數量:', parsed.tasks?.length || 0)
+                console.log('[InputArea] 解析結果 message 長度:', parsed.message?.length || 0)
+
+                // 如果有任務，顯示更多資訊（用於 debug）
+                if (parsed.tasks && parsed.tasks.length > 0) {
+                  console.log('[InputArea] 任務列表:', parsed.tasks.map(t => t.title))
+                }
+
+                // 如果有任務萃取，顯示完整的 Markdown 回應（包含表格）
+                // 而不是只顯示 JSON 內的 message 欄位
+                let messageContent = fullContent
+
+                // 如果完整內容包含 JSON 區塊，移除它以便顯示更乾淨的訊息
+                // 但如果 JSON 內的 message 足夠詳細，也可以使用它
+                if (parsed.type === 'tasks_extracted' && fullContent.includes('```json')) {
+                  // 保留 JSON 區塊前的 Markdown 內容作為訊息
+                  const jsonStart = fullContent.indexOf('```json')
+                  if (jsonStart > 50) {
+                    // 有足夠的 Markdown 內容在 JSON 前面
+                    messageContent = fullContent.slice(0, jsonStart).trim()
+                  } else if (parsed.message && parsed.message.length > 50) {
+                    // JSON 內的 message 夠詳細
+                    messageContent = parsed.message
+                  }
+                  // 否則保留完整內容
+                }
+
+                console.log('[InputArea] 最終訊息長度:', messageContent.length)
 
                 // 建立 AI 回覆訊息物件
                 const assistantMessageObj: Message = {
@@ -236,6 +276,8 @@ export default function InputArea() {
                 // 如果有萃取出的任務，設定為待確認
                 // 只過濾「已經加入任務列表」的，不過濾「還在待確認中」的
                 if (parsed.type === 'tasks_extracted' && parsed.tasks && parsed.tasks.length > 0) {
+                  console.log('[InputArea] 開始處理萃取的任務...')
+
                   // 只收集「已加入」（status: 'added'）的任務標題
                   // 不收集待確認的任務，這樣每次 AI 產生的任務都會完整顯示
                   const addedTitles: string[] = []
@@ -250,6 +292,7 @@ export default function InputArea() {
                   // 也檢查 Supabase 中現有的任務（從 calendarTasks 取得）
                   const existingTaskTitles = supabaseTasks.map(t => t.title.trim().toLowerCase())
                   const allAddedTitles = [...new Set([...addedTitles, ...existingTaskTitles])]
+                  console.log('[InputArea] 已存在的任務標題數量:', allAddedTitles.length)
 
                   // 相似度檢測函數（簡單版：共同關鍵字比例）
                   const isSimilar = (title1: string, title2: string): boolean => {
@@ -263,16 +306,29 @@ export default function InputArea() {
                   const newTasks = (parsed.tasks as ExtractedTask[]).filter(task => {
                     const normalizedTitle = task.title.trim().toLowerCase()
                     // 檢查是否已在任務列表中（完全重複）
-                    if (allAddedTitles.includes(normalizedTitle)) return false
+                    if (allAddedTitles.includes(normalizedTitle)) {
+                      console.log('[InputArea] 過濾掉重複任務:', task.title)
+                      return false
+                    }
                     // 檢查是否與已加入的任務相似
                     const hasSimilar = allAddedTitles.some(existing => isSimilar(normalizedTitle, existing))
+                    if (hasSimilar) {
+                      console.log('[InputArea] 過濾掉相似任務:', task.title)
+                    }
                     return !hasSimilar
                   })
 
+                  console.log('[InputArea] 過濾後的新任務數量:', newTasks.length)
+
                   // 新萃取的任務作為獨立群組加入（帶時間戳）
                   if (newTasks.length > 0) {
+                    console.log('[InputArea] 加入待確認任務群組...')
                     addPendingTaskGroup(newTasks, userMessage.slice(0, 500))
+                  } else {
+                    console.log('[InputArea] 沒有新任務可加入（全被過濾）')
                   }
+                } else {
+                  console.log('[InputArea] 不是 tasks_extracted 類型或沒有任務')
                 }
 
                 // 記錄 API 使用量
@@ -293,8 +349,70 @@ export default function InputArea() {
                 }
                 addMessage(errorMessageObj)
               }
-            } catch {
-              // 忽略解析錯誤
+            } catch (parseError) {
+              console.log('[InputArea] 解析錯誤，行內容:', line.slice(0, 100))
+            }
+          }
+        }
+      }
+
+      // 處理 buffer 中剩餘的內容（如果有 done 事件在最後）
+      if (buffer.trim() && buffer.startsWith('data: ')) {
+        try {
+          const data = JSON.parse(buffer.slice(6))
+          if (data.type === 'done') {
+            console.log('[InputArea] 處理 buffer 中的 done 事件')
+            // done 事件的處理邏輯已在上面的迴圈中，這裡主要是確保不會漏掉
+          }
+        } catch {
+          console.log('[InputArea] Buffer 剩餘內容無法解析')
+        }
+      }
+
+      // Stream 結束後的 fallback 處理
+      // 如果 fullContent 有內容但 streamingContent 還在顯示，表示 done 事件可能沒被正確處理
+      if (fullContent.length > 0) {
+        const currentStreamingContent = useAppStore.getState().streamingContent
+        if (currentStreamingContent && currentStreamingContent.length > 0) {
+          console.log('[InputArea] Fallback 處理：Stream 結束但 done 事件似乎沒處理，手動處理...')
+
+          // 解析完整內容
+          const parsed = parseAIResponse(fullContent)
+          console.log('[InputArea] Fallback 解析結果 type:', parsed.type)
+          console.log('[InputArea] Fallback 解析結果 tasks 數量:', parsed.tasks?.length || 0)
+
+          // 決定訊息內容
+          let messageContent = fullContent
+          if (parsed.type === 'tasks_extracted' && fullContent.includes('```json')) {
+            const jsonStart = fullContent.indexOf('```json')
+            if (jsonStart > 50) {
+              messageContent = fullContent.slice(0, jsonStart).trim()
+            }
+          }
+
+          // 建立 AI 回覆訊息物件
+          const assistantMessageObj: Message = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: messageContent,
+            timestamp: new Date(),
+          }
+
+          // 清除 streaming，加入完整訊息
+          clearStreamingContent()
+          addMessage(assistantMessageObj)
+          saveMessage(assistantMessageObj)
+
+          // 處理任務萃取
+          if (parsed.type === 'tasks_extracted' && parsed.tasks && parsed.tasks.length > 0) {
+            const existingTaskTitles = supabaseTasks.map(t => t.title.trim().toLowerCase())
+            const newTasks = (parsed.tasks as ExtractedTask[]).filter(task => {
+              const normalizedTitle = task.title.trim().toLowerCase()
+              return !existingTaskTitles.includes(normalizedTitle)
+            })
+            if (newTasks.length > 0) {
+              console.log('[InputArea] Fallback 加入待確認任務群組...')
+              addPendingTaskGroup(newTasks, userMessage.slice(0, 500))
             }
           }
         }

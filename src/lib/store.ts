@@ -79,11 +79,11 @@ export interface AppState {
   deleteTask: (id: string) => void
   completeTask: (id: string) => void
 
-  // 專案
+  // 專案（同步到 Supabase）
   projects: Project[]
-  addProject: (project: Omit<Project, 'id' | 'createdAt' | 'updatedAt'>) => void
-  updateProject: (id: string, updates: Partial<Project>) => void
-  deleteProject: (id: string) => void
+  addProject: (project: Omit<Project, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>
+  updateProject: (id: string, updates: Partial<Project>) => Promise<void>
+  deleteProject: (id: string) => Promise<void>
 
   // API 使用量
   apiUsage: ApiUsageRecord[]
@@ -222,32 +222,63 @@ export const useAppStore = create<AppState>()(
           ),
         })),
 
-      // 專案
+      // 專案（同步到 Supabase）
       projects: [],
-      addProject: (project) =>
+      addProject: async (project) => {
+        const newProject = {
+          ...project,
+          id: generateId(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }
+        // 先更新本地狀態
         set((state) => ({
-          projects: [
-            ...state.projects,
-            {
-              ...project,
-              id: generateId(),
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            },
-          ],
-        })),
-      updateProject: (id, updates) =>
+          projects: [...state.projects, newProject],
+        }))
+        // 同步到 Supabase
+        try {
+          const { projectsApi } = await import('./supabase-api')
+          await projectsApi.create({
+            name: project.name,
+            description: project.description || null,
+            status: project.status,
+            progress: project.progress,
+          })
+          console.log('[Store] 專案已同步到 Supabase:', project.name)
+        } catch (err) {
+          console.error('[Store] 專案同步失敗:', err)
+        }
+      },
+      updateProject: async (id, updates) => {
+        // 先更新本地狀態
         set((state) => ({
           projects: state.projects.map((project) =>
             project.id === id
               ? { ...project, ...updates, updatedAt: new Date() }
               : project
           ),
-        })),
-      deleteProject: (id) =>
+        }))
+        // 同步到 Supabase
+        try {
+          const { projectsApi } = await import('./supabase-api')
+          await projectsApi.update(id, updates as Record<string, unknown>)
+        } catch (err) {
+          console.error('[Store] 專案更新同步失敗:', err)
+        }
+      },
+      deleteProject: async (id) => {
+        // 先更新本地狀態
         set((state) => ({
           projects: state.projects.filter((project) => project.id !== id),
-        })),
+        }))
+        // 同步到 Supabase
+        try {
+          const { projectsApi } = await import('./supabase-api')
+          await projectsApi.delete(id)
+        } catch (err) {
+          console.error('[Store] 專案刪除同步失敗:', err)
+        }
+      },
 
       // API 使用量
       apiUsage: [],

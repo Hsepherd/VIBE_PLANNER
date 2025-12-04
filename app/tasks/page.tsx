@@ -25,6 +25,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { Calendar as CalendarComponent } from '@/components/ui/calendar'
+import { DateTimePicker } from '@/components/ui/datetime-picker'
 import { useSupabaseTasks, type Task, type RecurrenceType } from '@/lib/useSupabaseTasks'
 import type { RecurrenceConfig } from '@/lib/supabase-api'
 import { RecurrenceSelector, RecurrenceBadge } from '@/components/task/RecurrenceSelector'
@@ -80,6 +81,7 @@ import {
   Square,
   Edit3,
   GripVertical,
+  Undo2,
 } from 'lucide-react'
 
 type SortMode = 'priority' | 'dueDate' | 'assignee' | 'tag' | 'group'
@@ -989,7 +991,7 @@ export default function TasksPage() {
   const { tasks, isLoading, error, addTask, updateTask, deleteTask, completeTask, refresh } = useSupabaseTasks()
 
   const [newTaskTitle, setNewTaskTitle] = useState('')
-  const [filter, setFilter] = useState<'all' | 'pending' | 'completed'>('all')
+  const [filter, setFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed'>('all')
   const [showCompleted, setShowCompleted] = useState(false)
   const [sortMode, setSortMode] = useState<SortMode>('dueDate')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
@@ -1003,6 +1005,16 @@ export default function TasksPage() {
   const [isSelectionMode, setIsSelectionMode] = useState(false)
   const [showBatchEditDialog, setShowBatchEditDialog] = useState(false)
   const [lastSelectedTaskId, setLastSelectedTaskId] = useState<string | null>(null) // 用於 Shift 範圍選取
+
+  // 復原功能：儲存上一次批量操作前的任務狀態
+  // 復原堆疊（支援多步復原，每一步可包含多個任務變更）
+  const [undoHistory, setUndoHistory] = useState<Array<{
+    type: 'single' | 'batch'
+    changes: Array<{ taskId: string; previousState: Partial<Task> }>
+    description: string
+  }>>([])
+  // 舊版相容
+  const canUndo = undoHistory.length > 0
 
   // 團隊成員
   const [teamMembers, setTeamMembers] = useState<string[]>([])
@@ -1060,6 +1072,7 @@ export default function TasksPage() {
       // 狀態過濾
       if (filter === 'all' && task.status === 'completed') return false
       if (filter === 'pending' && task.status !== 'pending') return false
+      if (filter === 'in_progress' && task.status !== 'in_progress') return false
       if (filter === 'completed' && task.status !== 'completed') return false
 
       // 標籤過濾
@@ -1237,10 +1250,38 @@ export default function TasksPage() {
     }
   }
 
-  // 任務更新處理
-  const handleUpdateTask = useCallback(async (id: string, updates: Partial<Task>) => {
+  // 任務更新處理（支援復原）
+  const handleUpdateTask = useCallback(async (id: string, updates: Partial<Task>, skipUndo = false) => {
+    // 備份目前狀態（除非明確跳過）
+    if (!skipUndo) {
+      const task = tasks.find(t => t.id === id)
+      if (task) {
+        // 只備份被更新的欄位
+        const previousState: Partial<Task> = {}
+        for (const key of Object.keys(updates)) {
+          (previousState as Record<string, unknown>)[key] = (task as unknown as Record<string, unknown>)[key]
+        }
+        // 產生操作描述
+        const fieldNames: Record<string, string> = {
+          status: '狀態',
+          priority: '優先級',
+          assignee: '負責人',
+          dueDate: '截止日期',
+          startDate: '開始日期',
+          groupName: '組別',
+          title: '標題',
+          description: '描述',
+        }
+        const changedFields = Object.keys(updates).map(k => fieldNames[k] || k).join('、')
+        setUndoHistory(prev => [...prev.slice(-19), {
+          type: 'single',
+          changes: [{ taskId: id, previousState }],
+          description: `修改${changedFields}`,
+        }])
+      }
+    }
     await updateTask(id, updates)
-  }, [updateTask])
+  }, [updateTask, tasks])
 
   // 批次選取功能（支援 Shift 範圍選取）
   const toggleTaskSelection = useCallback((taskId: string, shiftKey: boolean = false) => {
@@ -1280,8 +1321,14 @@ export default function TasksPage() {
   }, [filteredTasks, lastSelectedTaskId])
 
   const selectAllTasks = useCallback(() => {
-    setSelectedTaskIds(new Set(filteredTasks.map(t => t.id)))
-  }, [filteredTasks])
+    // 當 filter 是 'all' 時，也要選取已完成的任務
+    if (filter === 'all') {
+      const allTaskIds = [...filteredTasks, ...completedTasks].map(t => t.id)
+      setSelectedTaskIds(new Set(allTaskIds))
+    } else {
+      setSelectedTaskIds(new Set(filteredTasks.map(t => t.id)))
+    }
+  }, [filteredTasks, completedTasks, filter])
 
   const deselectAllTasks = useCallback(() => {
     setSelectedTaskIds(new Set())
@@ -1294,10 +1341,10 @@ export default function TasksPage() {
     }
   }, [isSelectionMode])
 
-  // 批次刪除
+  // 批次刪除（刪除不支援復原）
   const handleBatchDelete = useCallback(async () => {
     if (selectedTaskIds.size === 0) return
-    if (!confirm(`確定要刪除 ${selectedTaskIds.size} 個任務嗎？`)) return
+    if (!confirm(`確定要刪除 ${selectedTaskIds.size} 個任務嗎？此操作無法復原。`)) return
 
     for (const taskId of selectedTaskIds) {
       await deleteTask(taskId)
@@ -1306,25 +1353,90 @@ export default function TasksPage() {
     setIsSelectionMode(false)
   }, [selectedTaskIds, deleteTask])
 
-  // 批次更新
+  // 批次更新（支援復原）
   const handleBatchUpdate = useCallback(async (updates: Partial<Task>) => {
     if (selectedTaskIds.size === 0) return
 
+    // 備份當前狀態以便復原
+    const backupStates: Array<{ taskId: string; previousState: Partial<Task> }> = []
+    for (const taskId of selectedTaskIds) {
+      const task = tasks.find(t => t.id === taskId)
+      if (task) {
+        // 只備份被更新的欄位
+        const previousState: Partial<Task> = {}
+        for (const key of Object.keys(updates)) {
+          (previousState as Record<string, unknown>)[key] = (task as unknown as Record<string, unknown>)[key]
+        }
+        backupStates.push({ taskId, previousState })
+      }
+    }
+
+    // 產生操作描述
+    const fieldNames: Record<string, string> = {
+      status: '狀態',
+      priority: '優先級',
+      assignee: '負責人',
+      dueDate: '截止日期',
+      startDate: '開始日期',
+      groupName: '組別',
+    }
+    const changedFields = Object.keys(updates).map(k => fieldNames[k] || k).join('、')
+    setUndoHistory(prev => [...prev.slice(-19), {
+      type: 'batch',
+      changes: backupStates,
+      description: `批次修改 ${selectedTaskIds.size} 個任務的${changedFields}`,
+    }])
+
+    // 執行更新
     for (const taskId of selectedTaskIds) {
       await updateTask(taskId, updates)
     }
     setShowBatchEditDialog(false)
-  }, [selectedTaskIds, updateTask])
+  }, [selectedTaskIds, updateTask, tasks])
 
-  // 批次完成
+  // 批次完成（支援復原）
   const handleBatchComplete = useCallback(async () => {
     if (selectedTaskIds.size === 0) return
 
+    // 備份當前狀態以便復原
+    const backupStates: Array<{ taskId: string; previousState: Partial<Task> }> = []
+    for (const taskId of selectedTaskIds) {
+      const task = tasks.find(t => t.id === taskId)
+      if (task) {
+        backupStates.push({
+          taskId,
+          previousState: { status: task.status, completedAt: task.completedAt }
+        })
+      }
+    }
+    setUndoHistory(prev => [...prev.slice(-19), {
+      type: 'batch',
+      changes: backupStates,
+      description: `批次完成 ${selectedTaskIds.size} 個任務`,
+    }])
+
+    // 執行完成
     for (const taskId of selectedTaskIds) {
       await completeTask(taskId)
     }
     setSelectedTaskIds(new Set())
-  }, [selectedTaskIds, completeTask])
+  }, [selectedTaskIds, completeTask, tasks])
+
+  // 復原上一步操作
+  const handleUndo = useCallback(async () => {
+    if (undoHistory.length === 0) return
+
+    // 取出最後一步操作
+    const lastAction = undoHistory[undoHistory.length - 1]
+
+    // 執行復原（跳過備份，避免無限循環）
+    for (const { taskId, previousState } of lastAction.changes) {
+      await updateTask(taskId, previousState)
+    }
+
+    // 移除已復原的操作
+    setUndoHistory(prev => prev.slice(0, -1))
+  }, [undoHistory, updateTask])
 
   // 狀態顏色對應
   const statusColors: Record<string, { bg: string; border: string; text: string; dotBg: string }> = {
@@ -1455,9 +1567,11 @@ export default function TasksPage() {
 
     // 日期顯示格式化（全部顯示年份）
     const formatDueDate = (date: Date) => {
-      if (isToday(date)) return '今天'
-      if (isTomorrow(date)) return '明天'
-      return format(date, 'yyyy/M/d', { locale: zhTW })
+      const hasTime = date.getHours() !== 0 || date.getMinutes() !== 0
+      const timeStr = hasTime ? ` ${format(date, 'HH:mm')}` : ''
+      if (isToday(date)) return `今天${timeStr}`
+      if (isTomorrow(date)) return `明天${timeStr}`
+      return format(date, 'M/d', { locale: zhTW }) + timeStr
     }
 
     // 日期是否過期
@@ -1497,16 +1611,16 @@ export default function TasksPage() {
               <button className={`w-3.5 h-3.5 rounded-full transition-all hover:scale-125 ring-2 ring-white shadow-sm ${currentStatus.dotBg}`} title={currentStatus.text} />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-28">
-              <DropdownMenuItem onClick={() => updateTask(task.id, { status: 'pending', completedAt: undefined })} className="gap-2 text-xs">
+              <DropdownMenuItem onClick={() => handleUpdateTask(task.id, { status: 'pending', completedAt: undefined })} className="gap-2 text-xs">
                 <span className="w-2.5 h-2.5 rounded-full bg-gray-400 shrink-0" />未開始
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => updateTask(task.id, { status: 'in_progress', completedAt: undefined })} className="gap-2 text-xs">
+              <DropdownMenuItem onClick={() => handleUpdateTask(task.id, { status: 'in_progress', completedAt: undefined })} className="gap-2 text-xs">
                 <span className="w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0" />進行中
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => completeTask(task.id)} className="gap-2 text-xs">
+              <DropdownMenuItem onClick={() => handleUpdateTask(task.id, { status: 'completed', completedAt: new Date() })} className="gap-2 text-xs">
                 <span className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />已完成
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => updateTask(task.id, { status: 'on_hold', completedAt: undefined })} className="gap-2 text-xs">
+              <DropdownMenuItem onClick={() => handleUpdateTask(task.id, { status: 'on_hold', completedAt: undefined })} className="gap-2 text-xs">
                 <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" />暫停
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -1534,7 +1648,7 @@ export default function TasksPage() {
           <AssigneeDropdown
             task={task}
             teamMembers={teamMembers}
-            onUpdate={(assignee) => updateTask(task.id, { assignee })}
+            onUpdate={(assignee) => handleUpdateTask(task.id, { assignee })}
             onAddMember={handleAddMember}
             onRemoveMember={handleRemoveMember}
             open={assigneeOpen}
@@ -1552,8 +1666,11 @@ export default function TasksPage() {
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
-              <CalendarComponent mode="single" selected={task.startDate ? new Date(task.startDate) : undefined} onSelect={(date) => { updateTask(task.id, { startDate: date || undefined }); setStartDatePickerOpen(false) }} locale={zhTW} />
-              {task.startDate && <div className="p-2 border-t"><button className="w-full text-xs text-gray-500 hover:text-red-500" onClick={() => { updateTask(task.id, { startDate: undefined }); setStartDatePickerOpen(false) }}>清除</button></div>}
+              <DateTimePicker
+                value={task.startDate ? new Date(task.startDate) : undefined}
+                onChange={(date) => { handleUpdateTask(task.id, { startDate: date || undefined }); setStartDatePickerOpen(false) }}
+                onClose={() => setStartDatePickerOpen(false)}
+              />
             </PopoverContent>
           </Popover>
         </div>
@@ -1570,8 +1687,11 @@ export default function TasksPage() {
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
-              <CalendarComponent mode="single" selected={task.dueDate ? new Date(task.dueDate) : undefined} onSelect={(date) => { updateTask(task.id, { dueDate: date || undefined }); setDatePickerOpen(false) }} locale={zhTW} />
-              {task.dueDate && <div className="p-2 border-t"><button className="w-full text-xs text-gray-500 hover:text-red-500" onClick={() => { updateTask(task.id, { dueDate: undefined }); setDatePickerOpen(false) }}>清除</button></div>}
+              <DateTimePicker
+                value={task.dueDate ? new Date(task.dueDate) : undefined}
+                onChange={(date) => { handleUpdateTask(task.id, { dueDate: date || undefined }); setDatePickerOpen(false) }}
+                onClose={() => setDatePickerOpen(false)}
+              />
             </PopoverContent>
           </Popover>
         </div>
@@ -1587,7 +1707,7 @@ export default function TasksPage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-28">
               {(Object.keys(priorityConfig) as Array<keyof typeof priorityConfig>).map((key) => (
-                <DropdownMenuItem key={key} onClick={() => updateTask(task.id, { priority: key })} className="text-xs">
+                <DropdownMenuItem key={key} onClick={() => handleUpdateTask(task.id, { priority: key })} className="text-xs">
                   <span className="mr-2">{priorityConfig[key].emoji}</span>{priorityConfig[key].label}
                   {task.priority === key && <Check className="h-3 w-3 ml-auto" />}
                 </DropdownMenuItem>
@@ -1618,12 +1738,12 @@ export default function TasksPage() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="left" className="w-36">
                   {availableGroups.map((group) => (
-                    <DropdownMenuItem key={group.name} onClick={() => updateTask(task.id, { groupName: group.name })} className="text-xs">
+                    <DropdownMenuItem key={group.name} onClick={() => handleUpdateTask(task.id, { groupName: group.name })} className="text-xs">
                       <span className={`w-2 h-2 rounded-full mr-2 ${getGroupColor(group.name).bg}`} />{group.name}
                     </DropdownMenuItem>
                   ))}
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem className="text-xs text-gray-500" onClick={() => updateTask(task.id, { groupName: undefined })}>清除組別</DropdownMenuItem>
+                  <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { groupName: undefined })}>清除組別</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
               {/* 標籤 */}
@@ -1642,7 +1762,7 @@ export default function TasksPage() {
                       <DropdownMenuItem key={tag.name} onClick={() => {
                         const currentTags = task.tags || []
                         const newTags = tagSelected ? currentTags.filter(t => t !== tag.name) : [...currentTags, tag.name]
-                        updateTask(task.id, { tags: newTags })
+                        handleUpdateTask(task.id, { tags: newTags })
                       }} className="text-xs">
                         <span className={`w-2 h-2 rounded-full mr-2 ${getTagColor(tag.name).bg}`} />{tag.name}
                         {tagSelected && <Check className="h-3 w-3 ml-auto" />}
@@ -1650,7 +1770,7 @@ export default function TasksPage() {
                     )
                   })}
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem className="text-xs text-gray-500" onClick={() => updateTask(task.id, { tags: [] })}>清除標籤</DropdownMenuItem>
+                  <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { tags: [] })}>清除標籤</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
               <DropdownMenuSeparator />
@@ -1687,9 +1807,10 @@ export default function TasksPage() {
     />
   )
 
-  // 判斷是否全選
-  const isAllSelected = filteredTasks.length > 0 && selectedTaskIds.size === filteredTasks.length
-  const isPartiallySelected = selectedTaskIds.size > 0 && selectedTaskIds.size < filteredTasks.length
+  // 判斷是否全選（filter 為 'all' 時要包含已完成的任務）
+  const totalSelectableTasks = filter === 'all' ? filteredTasks.length + completedTasks.length : filteredTasks.length
+  const isAllSelected = totalSelectableTasks > 0 && selectedTaskIds.size === totalSelectableTasks
+  const isPartiallySelected = selectedTaskIds.size > 0 && selectedTaskIds.size < totalSelectableTasks
 
   // ClickUp 風格的表格標題列（含可拖曳調整寬度）
   const TableHeader = () => (
@@ -1924,7 +2045,20 @@ export default function TasksPage() {
               待處理
               <span className={`ml-1.5 px-1.5 py-0.5 rounded text-xs ${
                 filter === 'pending' ? 'bg-gray-700' : 'bg-gray-200'
-              }`}>{tasks.filter(t => t.status !== 'completed').length}</span>
+              }`}>{tasks.filter(t => t.status === 'pending').length}</span>
+            </button>
+            <button
+              onClick={() => setFilter('in_progress')}
+              className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                filter === 'in_progress'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-gray-100'
+              }`}
+            >
+              進行中
+              <span className={`ml-1.5 px-1.5 py-0.5 rounded text-xs ${
+                filter === 'in_progress' ? 'bg-blue-500' : 'bg-gray-200'
+              }`}>{tasks.filter(t => t.status === 'in_progress').length}</span>
             </button>
             <button
               onClick={() => setFilter('completed')}
@@ -2298,16 +2432,36 @@ export default function TasksPage() {
                   </DropdownMenuContent>
                 </DropdownMenu>
 
-                <div className="w-px h-6 bg-gray-300 mx-1" />
+                {/* 狀態 */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="flex items-center gap-1.5 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
+                      <Circle className="h-4 w-4" />
+                      狀態
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => handleBatchUpdate({ status: 'pending' })}>
+                      <span className="w-2 h-2 rounded-full bg-gray-400 mr-2" />
+                      未開始
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleBatchUpdate({ status: 'in_progress' })}>
+                      <span className="w-2 h-2 rounded-full bg-blue-500 mr-2" />
+                      進行中
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleBatchUpdate({ status: 'on_hold' })}>
+                      <span className="w-2 h-2 rounded-full bg-amber-500 mr-2" />
+                      暫停
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleBatchUpdate({ status: 'completed' })}>
+                      <span className="w-2 h-2 rounded-full bg-green-500 mr-2" />
+                      已完成
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
-                {/* 標記完成 */}
-                <button
-                  onClick={handleBatchComplete}
-                  className="flex items-center gap-1.5 px-3 py-2 text-sm bg-green-100 text-green-700 hover:bg-green-200 rounded-md transition-colors"
-                >
-                  <Check className="h-4 w-4" />
-                  完成
-                </button>
+                <div className="w-px h-6 bg-gray-300 mx-1" />
 
                 {/* 刪除 */}
                 <button
@@ -2317,9 +2471,43 @@ export default function TasksPage() {
                   <Trash2 className="h-4 w-4" />
                   刪除
                 </button>
+
+                {/* 復原（只在有可復原操作時顯示） */}
+                {canUndo && (
+                  <>
+                    <div className="w-px h-6 bg-gray-300 mx-1" />
+                    <button
+                      onClick={handleUndo}
+                      className="flex items-center gap-1.5 px-3 py-2 text-sm bg-amber-100 text-amber-700 hover:bg-amber-200 rounded-md transition-colors"
+                      title={undoHistory.length > 0 ? `復原: ${undoHistory[undoHistory.length - 1].description}` : '復原'}
+                    >
+                      <Undo2 className="h-4 w-4" />
+                      復原
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 浮動復原按鈕（當沒有選取任務時顯示） */}
+      {canUndo && selectedTaskIds.size === 0 && (
+        <div className="fixed bottom-6 right-6 z-50">
+          <button
+            onClick={handleUndo}
+            className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 text-white hover:bg-amber-600 rounded-full shadow-lg transition-all hover:scale-105"
+            title={undoHistory.length > 0 ? `復原: ${undoHistory[undoHistory.length - 1].description}` : '復原'}
+          >
+            <Undo2 className="h-4 w-4" />
+            <span className="text-sm font-medium">復原</span>
+            {undoHistory.length > 1 && (
+              <span className="bg-amber-600 text-xs px-1.5 py-0.5 rounded-full">
+                {undoHistory.length}
+              </span>
+            )}
+          </button>
         </div>
       )}
     </div>
