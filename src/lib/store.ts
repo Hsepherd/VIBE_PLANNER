@@ -128,11 +128,13 @@ export interface AppState {
 export interface ExtractedTask {
   title: string
   description?: string
-  due_date?: string
+  start_date?: string  // 開始日期
+  due_date?: string    // 截止日期
   assignee?: string
   priority?: 'low' | 'medium' | 'high' | 'urgent'
   project?: string
   group?: string  // 任務組別：電訪組、業務組、行政組、客服組、行銷組、財務組
+  recurrence_type?: 'none' | 'daily' | 'weekly' | 'monthly'  // 例行性任務類型
 }
 
 // 待確認任務群組（每次萃取是一個群組）

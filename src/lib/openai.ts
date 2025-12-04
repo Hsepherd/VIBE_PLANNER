@@ -75,15 +75,45 @@ export const getFullSystemPrompt = () => {
     {
       "title": "任務標題（簡短精確，10-20字）",
       "description": "【任務摘要】\\n小王需要完成登入功能的驗證碼模組，確保系統安全性。\\n\\n【執行細節】\\n1. 開發驗證碼模組\\n2. 進行單元測試\\n3. 整合到現有登入流程\\n\\n【會議脈絡】\\n主管詢問登入功能進度時，小王提出驗證碼需求，主管要求週五前完成。\\n\\n【原文引用】\\n「【00:15】小王：登入功能已經完成了基本框架，但還需要加上驗證碼功能」\\n「【00:35】主管：好的，驗證碼很重要，記得要做好測試」",
-      "due_date": "YYYY-MM-DD 或 null",
+      "start_date": "YYYY-MM-DD 或 null（開始執行日期）",
+      "due_date": "YYYY-MM-DD 或 null（截止日期）",
       "assignee": "負責人 或 null",
       "priority": "low | medium | high | urgent",
-      "project": "專案名稱 或 null"
+      "project": "專案名稱 或 null",
+      "group": "組別 或 null（電訪組、業務組、行政組、客服組、行銷組等）",
+      "recurrence_type": "none | daily | weekly | monthly（例行性任務類型）"
     }
   ],
   "message": "給使用者的回應訊息"
 }
 \`\`\`
+
+## 日期欄位的重要規則
+- **start_date**：任務開始執行的日期
+- **due_date**：任務必須完成的截止日期
+- 日期格式必須是 YYYY-MM-DD（如 2025-12-15）
+- 當使用者說「下週一開始做」時，start_date 填下週一的日期
+- 當使用者說「週五前完成」時，due_date 填週五的日期
+- 如果使用者要求規劃排程，請合理分配 start_date 和 due_date
+
+## 例行性任務（Recurring Tasks）辨識規則
+**recurrence_type** 欄位用於標記需要重複執行的任務，可選值：
+- **none**：單次任務（預設）
+- **daily**：每天執行
+- **weekly**：每週執行
+- **monthly**：每月執行
+
+### 關鍵字辨識
+當使用者提到以下關鍵字時，自動設定對應的 recurrence_type：
+- 「每天」「每日」「daily」「天天」「日常」→ daily
+- 「每週」「每週X」「每星期」「週週」→ weekly
+- 「每月」「每個月」「月月」→ monthly
+
+### 範例
+- 「每天檢查老師作業」→ recurrence_type: "daily"
+- 「每週一開週會」→ recurrence_type: "weekly"
+- 「每月 1 號做月報」→ recurrence_type: "monthly"
+- 「下週三前完成報告」→ recurrence_type: "none"（單次任務）
 
 ## 描述欄位的重要規則（必須嚴格遵守！）
 description 欄位必須使用以下結構化格式，每個部分都要有：
@@ -721,21 +751,20 @@ export function generateCalendarContext(tasks: Array<{
     context += '\n'
   }
 
-  // 依日期排序顯示未來 14 天的任務
+  // 依日期排序顯示所有未來任務（無時間限制）
   const sortedDates = Object.keys(tasksByDate).sort()
-  const next14Days = sortedDates.filter(date => {
+  const futureTasks = sortedDates.filter(date => {
     const d = new Date(date)
-    const diff = (d.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24)
-    return diff >= 0 && diff <= 14
+    return d >= todayDate // 顯示今天及未來所有任務
   })
 
-  if (next14Days.length > 0) {
-    context += `### 📋 未來兩週任務\n`
-    next14Days.forEach(date => {
+  if (futureTasks.length > 0) {
+    context += `### 📋 未來任務（依截止日排序）\n`
+    futureTasks.forEach(date => {
       const dateTasks = tasksByDate[date]
       const d = new Date(date)
       const dayDiff = Math.floor((d.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24))
-      const dayLabel = dayDiff === 0 ? '（今天）' : dayDiff === 1 ? '（明天）' : ''
+      const dayLabel = dayDiff === 0 ? '（今天）' : dayDiff === 1 ? '（明天）' : dayDiff <= 7 ? '（本週）' : ''
 
       context += `\n**${date}${dayLabel}** - ${dateTasks.length} 項任務\n`
       dateTasks.forEach(task => {
@@ -747,6 +776,20 @@ export function generateCalendarContext(tasks: Array<{
         if (task.project) context += ` [${task.project}]`
         context += '\n'
       })
+    })
+  }
+
+  // 顯示無截止日的任務
+  if (noDueDateTasks.length > 0) {
+    context += `\n### 📝 無截止日任務（${noDueDateTasks.length} 項）\n`
+    noDueDateTasks.filter(t => t.status !== 'completed').forEach(task => {
+      const statusIcon = task.status === 'in_progress' ? '⏳' : '○'
+      context += `- [${statusIcon}] ${task.title}`
+      if (task.priority === 'urgent') context += ' 🔴'
+      else if (task.priority === 'high') context += ' 🟠'
+      if (task.assignee) context += ` (@${task.assignee})`
+      if (task.project) context += ` [${task.project}]`
+      context += '\n'
     })
   }
 
@@ -763,7 +806,24 @@ export function generateCalendarContext(tasks: Array<{
   if (urgentCount > 0) context += `- 緊急待處理：${urgentCount} 項\n`
   if (overdueTasks.length > 0) context += `- 逾期未完成：${overdueTasks.length} 項\n`
 
-  context += `\n---\n\n當使用者詢問行程安排、任務調整、今天要做什麼等問題時，請參考以上行事曆資料提供建議。\n`
+  // 依負責人分組
+  const tasksByAssignee: Record<string, typeof tasks> = {}
+  tasks.filter(t => t.status !== 'completed').forEach(task => {
+    const assignee = task.assignee || '未指派'
+    if (!tasksByAssignee[assignee]) {
+      tasksByAssignee[assignee] = []
+    }
+    tasksByAssignee[assignee].push(task)
+  })
+
+  if (Object.keys(tasksByAssignee).length > 1 || (Object.keys(tasksByAssignee).length === 1 && !tasksByAssignee['未指派'])) {
+    context += `\n### 👥 依負責人分類\n`
+    Object.entries(tasksByAssignee).forEach(([assignee, assigneeTasks]) => {
+      context += `- **${assignee}**：${assigneeTasks.length} 項待處理\n`
+    })
+  }
+
+  context += `\n---\n\n你可以看到使用者目前所有的任務列表。當使用者詢問任務相關問題（如「我今天要做什麼」「哪些任務快到期」「幫我整理一下任務」等），請根據以上任務資料提供建議。\n`
 
   return context
 }

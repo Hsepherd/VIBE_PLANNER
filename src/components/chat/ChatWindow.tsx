@@ -283,8 +283,11 @@ export default function ChatWindow() {
         description: task.description || '',
         status: 'pending',
         priority: task.priority || 'medium',
+        startDate: task.start_date ? new Date(task.start_date) : undefined,
         dueDate: task.due_date ? new Date(task.due_date) : undefined,
         assignee: task.assignee || undefined,
+        groupName: task.group || undefined,
+        recurrenceType: task.recurrence_type || 'none',
       })
     } catch (err) {
       console.error('新增任務到 Supabase 失敗:', err)
@@ -359,8 +362,11 @@ export default function ChatWindow() {
               description: task.description || '',
               status: 'pending',
               priority: task.priority || 'medium',
+              startDate: task.start_date ? new Date(task.start_date) : undefined,
               dueDate: task.due_date ? new Date(task.due_date) : undefined,
               assignee: task.assignee || undefined,
+              groupName: task.group || undefined,
+              recurrenceType: task.recurrence_type || 'none',
             })
           } catch (err) {
             console.error('新增任務到 Supabase 失敗:', err)

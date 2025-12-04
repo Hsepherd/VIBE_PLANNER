@@ -1,7 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { tasksApi, type DbTask } from './supabase-api'
+import { tasksApi, type DbTask, type RecurrenceConfig } from './supabase-api'
+
+// 例行性任務類型
+export type RecurrenceType = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly'
 
 // 前端使用的 Task 類型
 export interface Task {
@@ -20,6 +23,11 @@ export interface Task {
   createdAt: Date
   updatedAt: Date
   completedAt?: Date
+  // 例行性任務欄位
+  recurrenceType?: RecurrenceType
+  recurrenceConfig?: RecurrenceConfig
+  parentTaskId?: string
+  isRecurringInstance?: boolean
 }
 
 // 將 Supabase 資料轉換為前端格式
@@ -39,6 +47,11 @@ function dbTaskToTask(dbTask: DbTask): Task {
     createdAt: new Date(dbTask.created_at),
     updatedAt: new Date(dbTask.updated_at),
     completedAt: dbTask.completed_at ? new Date(dbTask.completed_at) : undefined,
+    // 例行性任務欄位
+    recurrenceType: (dbTask.recurrence_type as RecurrenceType) || undefined,
+    recurrenceConfig: dbTask.recurrence_config || undefined,
+    parentTaskId: dbTask.parent_task_id || undefined,
+    isRecurringInstance: dbTask.is_recurring_instance || false,
   }
 }
 
@@ -82,8 +95,13 @@ export function useSupabaseTasks() {
         due_date: task.dueDate ? task.dueDate.toISOString() : null,
         assignee: task.assignee || null,
         project_id: task.projectId || null,
-        tags: null,
-        group_name: null,
+        tags: task.tags || null,
+        group_name: task.groupName || null,
+        // 例行性任務欄位
+        recurrence_type: task.recurrenceType || 'none',
+        recurrence_config: task.recurrenceConfig || null,
+        parent_task_id: task.parentTaskId || null,
+        is_recurring_instance: task.isRecurringInstance || false,
       })
       setTasks(prev => [dbTaskToTask(dbTask), ...prev])
       return dbTask
@@ -109,12 +127,19 @@ export function useSupabaseTasks() {
       if ('tags' in updates) dbUpdates.tags = updates.tags || null
       if ('groupName' in updates) dbUpdates.group_name = updates.groupName || null
       if ('completedAt' in updates) dbUpdates.completed_at = updates.completedAt ? updates.completedAt.toISOString() : null
+      // 例行性任務欄位
+      if ('recurrenceType' in updates) dbUpdates.recurrence_type = updates.recurrenceType || 'none'
+      if ('recurrenceConfig' in updates) dbUpdates.recurrence_config = updates.recurrenceConfig || null
+      if ('parentTaskId' in updates) dbUpdates.parent_task_id = updates.parentTaskId || null
+      if ('isRecurringInstance' in updates) dbUpdates.is_recurring_instance = updates.isRecurringInstance || false
 
       const dbTask = await tasksApi.update(id, dbUpdates)
       setTasks(prev => prev.map(t => t.id === id ? dbTaskToTask(dbTask) : t))
       return dbTask
     } catch (err) {
-      console.error('更新任務失敗:', err)
+      // 顯示更詳細的錯誤訊息
+      const error = err as { message?: string; code?: string; details?: string }
+      console.error('更新任務失敗:', error?.message || error?.code || JSON.stringify(err))
       throw err
     }
   }, [])
@@ -133,14 +158,30 @@ export function useSupabaseTasks() {
   // 完成任務
   const completeTask = useCallback(async (id: string) => {
     try {
-      const dbTask = await tasksApi.complete(id)
-      setTasks(prev => prev.map(t => t.id === id ? dbTaskToTask(dbTask) : t))
-      return dbTask
+      // 檢查是否為例行任務
+      const task = tasks.find(t => t.id === id)
+      if (task?.recurrenceType && task.recurrenceType !== 'none') {
+        // 例行任務：完成後自動建立下一個
+        const { completedTask, nextTask } = await tasksApi.completeRecurring(id)
+        setTasks(prev => {
+          const updated = prev.map(t => t.id === id ? dbTaskToTask(completedTask) : t)
+          if (nextTask) {
+            return [dbTaskToTask(nextTask), ...updated]
+          }
+          return updated
+        })
+        return completedTask
+      } else {
+        // 一般任務
+        const dbTask = await tasksApi.complete(id)
+        setTasks(prev => prev.map(t => t.id === id ? dbTaskToTask(dbTask) : t))
+        return dbTask
+      }
     } catch (err) {
       console.error('完成任務失敗:', err)
       throw err
     }
-  }, [])
+  }, [tasks])
 
   // 重新載入
   const refresh = useCallback(() => {

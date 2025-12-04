@@ -1,8 +1,8 @@
 # Vibe Planner - 專案進度
 
-> **最後更新**：2025-12-01
+> **最後更新**：2025-12-04
 > **整體進度**：100%
-> **目前階段**：📅 Apple Calendar 風格行事曆完成
+> **目前階段**：🔄 例行性任務功能完成
 
 ---
 
@@ -38,6 +38,7 @@
 | ✏️ 負責人快速修正 | ✅ 完成 | 100% |
 | 🎨 ClickUp 風格任務列表 | ✅ 完成 | 100% |
 | 📅 Apple Calendar 風格行事曆 | ✅ 完成 | 100% |
+| 🔄 例行性任務功能 | ✅ 完成 | 100% |
 
 ---
 
@@ -144,6 +145,16 @@
 - [x] 粗體日期標題（深色突顯）
 - [x] 限制顯示數量 + 「還有 X 項」按鈕
 - [x] 週視圖和月視圖統一風格
+
+### 例行性任務功能（已完成）
+- [x] 資料庫欄位：recurrence_type、recurrence_config、parent_task_id
+- [x] RecurrenceSelector UI 元件（選擇重複頻率）
+- [x] RecurrenceBadge 標籤元件（顯示重複標記）
+- [x] completeRecurring API（完成時自動建立下一個任務）
+- [x] calculateNextDueDate 日期計算函數
+- [x] 每週可選特定週幾（週一到週日）
+- [x] AI 自動辨識例行任務關鍵字
+- [x] 開始日和截止日同時推進
 
 ### 使用者驗證系統（已完成）
 - [x] Supabase Auth 整合

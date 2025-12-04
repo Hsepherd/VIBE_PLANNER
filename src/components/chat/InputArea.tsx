@@ -6,6 +6,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { useAppStore, type Message, type ExtractedTask } from '@/lib/store'
 import { useChatSessionContext } from '@/lib/ChatSessionContext'
 import { useConversationSummary } from '@/lib/useConversationSummary'
+import { useSupabaseTasks } from '@/lib/useSupabaseTasks'
+import { useAuth } from '@/lib/useAuth'
 import { Send, Paperclip, X, Loader2, Image as ImageIcon, Brain } from 'lucide-react'
 import { parseAIResponse } from '@/lib/utils-client'
 import { learnFromUserReply } from '@/lib/few-shot-learning'
@@ -19,14 +21,12 @@ export default function InputArea() {
   const {
     addMessage,
     messages,
-    tasks,
     isLoading,
     setIsLoading,
     addApiUsage,
     appendStreamingContent,
     clearStreamingContent,
     addPendingTaskGroup,
-    pendingTaskGroups,
     processedTaskGroups,
     setLastInputContext,
   } = useAppStore()
@@ -35,8 +35,13 @@ export default function InputArea() {
     saveMessage,
     generateTitleFromFirstMessage,
     currentSessionId,
-    sessions,
   } = useChatSessionContext()
+
+  // 從 Supabase 取得真實的任務資料（用於 AI 上下文）
+  const { tasks: supabaseTasks } = useSupabaseTasks()
+
+  // 取得目前登入使用者資料
+  const { user } = useAuth()
 
   // 使用摘要功能
   const {
@@ -146,17 +151,26 @@ export default function InputArea() {
         ]
       }
 
-      // 準備行事曆資料（用於 AI 上下文）
-      const calendarTasks = tasks.map(t => ({
+      // 準備任務列表資料（用於 AI 上下文）
+      const calendarTasks = supabaseTasks.map(t => ({
         id: t.id,
         title: t.title,
         description: t.description,
         status: t.status,
         priority: t.priority,
         dueDate: t.dueDate,
+        startDate: t.startDate,
         assignee: t.assignee,
         project: t.project,
+        groupName: t.groupName,
+        tags: t.tags,
       }))
+
+      // 準備使用者資料（用於 AI 上下文）
+      const userInfo = user ? {
+        name: user.user_metadata?.name || user.email?.split('@')[0] || '使用者',
+        email: user.email,
+      } : null
 
       // 呼叫 Streaming API
       const response = await fetch('/api/chat/stream', {
@@ -168,6 +182,7 @@ export default function InputArea() {
           messages: apiMessages,
           image: currentImage,
           calendarTasks, // 傳送任務資料給 AI
+          userInfo, // 傳送使用者資料給 AI
         }),
       })
 
@@ -218,25 +233,23 @@ export default function InputArea() {
                 // 同步儲存到雲端
                 saveMessage(assistantMessageObj)
 
-                // 如果有萃取出的任務，設定為待確認（過濾重複 + 相似任務合併）
+                // 如果有萃取出的任務，設定為待確認
+                // 只過濾「已經加入任務列表」的，不過濾「還在待確認中」的
                 if (parsed.type === 'tasks_extracted' && parsed.tasks && parsed.tasks.length > 0) {
-                  // 收集已處理過的任務標題
-                  const processedTitles: string[] = []
+                  // 只收集「已加入」（status: 'added'）的任務標題
+                  // 不收集待確認的任務，這樣每次 AI 產生的任務都會完整顯示
+                  const addedTitles: string[] = []
                   processedTaskGroups.forEach(group => {
                     group.tasks.forEach(task => {
-                      processedTitles.push(task.title.trim().toLowerCase())
+                      if (task.status === 'added') {
+                        addedTitles.push(task.title.trim().toLowerCase())
+                      }
                     })
                   })
 
-                  // 收集目前待確認列表中的任務標題
-                  const pendingTitles: string[] = []
-                  pendingTaskGroups.forEach(group => {
-                    group.tasks.forEach(task => {
-                      pendingTitles.push(task.title.trim().toLowerCase())
-                    })
-                  })
-
-                  const allExistingTitles = [...processedTitles, ...pendingTitles]
+                  // 也檢查 Supabase 中現有的任務（從 calendarTasks 取得）
+                  const existingTaskTitles = supabaseTasks.map(t => t.title.trim().toLowerCase())
+                  const allAddedTitles = [...new Set([...addedTitles, ...existingTaskTitles])]
 
                   // 相似度檢測函數（簡單版：共同關鍵字比例）
                   const isSimilar = (title1: string, title2: string): boolean => {
@@ -246,13 +259,13 @@ export default function InputArea() {
                     return commonWords.length >= Math.min(words1.length, words2.length) * 0.5
                   }
 
-                  // 過濾掉完全重複或相似的任務
+                  // 只過濾掉「已加入任務列表」的任務
                   const newTasks = (parsed.tasks as ExtractedTask[]).filter(task => {
                     const normalizedTitle = task.title.trim().toLowerCase()
-                    // 檢查完全重複
-                    if (allExistingTitles.includes(normalizedTitle)) return false
-                    // 檢查相似（如「優化業務SOP」和「整理業務SOP」）
-                    const hasSimilar = allExistingTitles.some(existing => isSimilar(normalizedTitle, existing))
+                    // 檢查是否已在任務列表中（完全重複）
+                    if (allAddedTitles.includes(normalizedTitle)) return false
+                    // 檢查是否與已加入的任務相似
+                    const hasSimilar = allAddedTitles.some(existing => isSimilar(normalizedTitle, existing))
                     return !hasSimilar
                   })
 

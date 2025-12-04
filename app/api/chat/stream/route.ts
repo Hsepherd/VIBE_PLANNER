@@ -6,7 +6,7 @@ import { generateFewShotPrompt } from '@/lib/few-shot-learning'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { messages, image, calendarTasks } = body
+    const { messages, image, calendarTasks, userInfo } = body
 
     // 取得最後一條使用者訊息
     const lastUserMessage = messages.filter((m: { role: string }) => m.role === 'user').pop()
@@ -38,6 +38,19 @@ export async function POST(request: NextRequest) {
       } catch (error) {
         console.error('載入偏好設定失敗:', error)
       }
+    }
+
+    // 注入使用者資料（讓 AI 知道正在與誰對話）
+    if (userInfo) {
+      systemPrompt += `\n\n## 👤 目前使用者資訊
+- 名稱：${userInfo.name}
+- Email：${userInfo.email}
+
+**重要規則**：
+1. 當使用者說「我要做」「我來」「我負責」或任何表示自己要做的任務時，負責人（assignee）必須填入「${userInfo.name}」
+2. 當使用者問到自己的資訊時，可以回答以上資訊
+3. 萃取任務時，如果內容沒有明確指定其他人，預設負責人就是「${userInfo.name}」
+`
     }
 
     // 注入行事曆上下文（讓 AI 了解目前的任務狀態）

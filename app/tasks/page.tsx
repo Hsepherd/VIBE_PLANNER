@@ -25,7 +25,9 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { Calendar as CalendarComponent } from '@/components/ui/calendar'
-import { useSupabaseTasks, type Task } from '@/lib/useSupabaseTasks'
+import { useSupabaseTasks, type Task, type RecurrenceType } from '@/lib/useSupabaseTasks'
+import type { RecurrenceConfig } from '@/lib/supabase-api'
+import { RecurrenceSelector, RecurrenceBadge } from '@/components/task/RecurrenceSelector'
 import { getTeamMembers, addTeamMember, removeTeamMember } from '@/lib/team-members'
 import { getTags, addTag, removeTag, getTagColor, TAG_COLORS, type Tag } from '@/lib/tags'
 import { getGroups, addGroup, removeGroup, getGroupColor, GROUP_COLORS, type Group } from '@/lib/groups'
@@ -416,6 +418,13 @@ function TaskDetailDialog({
                   )}
                 </PopoverContent>
               </Popover>
+
+              {/* 重複設定 */}
+              <RecurrenceSelector
+                value={localTask.recurrenceType}
+                config={localTask.recurrenceConfig}
+                onChange={(type, config) => handleUpdate({ recurrenceType: type, recurrenceConfig: config })}
+              />
 
               {/* 專案 */}
               {localTask.project && (
@@ -870,6 +879,109 @@ function TaskDetailDialog({
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+// 負責人下拉選單組件（支援新增/刪除成員）
+function AssigneeDropdown({
+  task,
+  teamMembers,
+  onUpdate,
+  onAddMember,
+  onRemoveMember,
+  open,
+  onOpenChange,
+}: {
+  task: Task
+  teamMembers: string[]
+  onUpdate: (assignee: string | undefined) => void
+  onAddMember: (name: string) => void
+  onRemoveMember: (name: string) => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const [showManager, setShowManager] = useState(false)
+  const [newMemberName, setNewMemberName] = useState('')
+
+  return (
+    <DropdownMenu open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) setShowManager(false) }}>
+      <DropdownMenuTrigger asChild>
+        <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
+          <User className="h-4 w-4 shrink-0" />
+          <span className="truncate flex-1 text-left">{task.assignee || '-'}</span>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-48">
+        {showManager ? (
+          <div className="p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="font-medium text-xs">管理團隊成員</h4>
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setShowManager(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                value={newMemberName}
+                onChange={(e) => setNewMemberName(e.target.value)}
+                placeholder="新增成員..."
+                className="h-7 text-xs"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newMemberName.trim()) {
+                    onAddMember(newMemberName.trim())
+                    setNewMemberName('')
+                  }
+                }}
+              />
+              <Button size="sm" className="h-7 px-2" onClick={() => {
+                if (newMemberName.trim()) {
+                  onAddMember(newMemberName.trim())
+                  setNewMemberName('')
+                }
+              }}>
+                <Plus className="h-3 w-3" />
+              </Button>
+            </div>
+            <div className="max-h-32 overflow-y-auto space-y-1">
+              {teamMembers.map((member) => (
+                <div key={member} className="flex items-center justify-between px-2 py-1 rounded hover:bg-gray-100 text-xs">
+                  <span>{member}</span>
+                  <Button variant="ghost" size="sm" className="h-5 w-5 p-0 text-gray-400 hover:text-red-500" onClick={() => onRemoveMember(member)}>
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+              {teamMembers.length === 0 && (
+                <div className="text-xs text-gray-400 text-center py-2">尚無成員</div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            <DropdownMenuItem onClick={() => onUpdate(undefined)} className="text-xs text-gray-500">
+              <X className="h-3 w-3 mr-2" />不指定
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {teamMembers.map((member) => (
+              <DropdownMenuItem key={member} onClick={() => onUpdate(member)} className="text-xs">
+                <User className="h-3.5 w-3.5 mr-2 shrink-0" />{member}
+                {task.assignee === member && <Check className="h-3 w-3 ml-auto" />}
+              </DropdownMenuItem>
+            ))}
+            {teamMembers.length === 0 && (
+              <div className="px-2 py-1.5 text-xs text-gray-400">尚無成員，請先新增</div>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={(e) => { e.preventDefault(); setShowManager(true) }}
+              className="text-xs text-gray-500"
+            >
+              <Settings className="h-3.5 w-3.5 mr-2" />管理成員...
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -1412,28 +1524,22 @@ export default function TasksPage() {
             >
               {task.title}
             </span>
+            {/* 例行任務標籤 */}
+            <RecurrenceBadge type={task.recurrenceType} config={task.recurrenceConfig} />
           </div>
         </div>
 
-        {/* 負責人欄位 - 動態寬度 */}
+        {/* 負責人欄位 - 動態寬度（可新增/刪除成員）*/}
         <div className="h-12 flex items-center shrink-0" style={{ width: columnWidths.assignee }}>
-          <DropdownMenu open={assigneeOpen} onOpenChange={setAssigneeOpen}>
-            <DropdownMenuTrigger asChild>
-              <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
-                <User className="h-4 w-4 shrink-0" />
-                <span className="truncate flex-1 text-left">{task.assignee || '-'}</span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-40">
-              {teamMembers.map((member) => (
-                <DropdownMenuItem key={member} onClick={() => updateTask(task.id, { assignee: member })} className="text-xs">
-                  <User className="h-3.5 w-3.5 mr-2 shrink-0" />{member}
-                  {task.assignee === member && <Check className="h-3 w-3 ml-auto" />}
-                </DropdownMenuItem>
-              ))}
-              {task.assignee && <><DropdownMenuSeparator /><DropdownMenuItem className="text-xs text-gray-500" onClick={() => updateTask(task.id, { assignee: undefined })}><X className="h-3 w-3 mr-2" />清除</DropdownMenuItem></>}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <AssigneeDropdown
+            task={task}
+            teamMembers={teamMembers}
+            onUpdate={(assignee) => updateTask(task.id, { assignee })}
+            onAddMember={handleAddMember}
+            onRemoveMember={handleRemoveMember}
+            open={assigneeOpen}
+            onOpenChange={setAssigneeOpen}
+          />
         </div>
 
         {/* 開始日欄位 - 動態寬度 */}

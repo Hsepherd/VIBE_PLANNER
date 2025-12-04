@@ -4,6 +4,67 @@
 
 ---
 
+## 2025-12-04
+
+### 🔄 例行性任務功能（Recurring Tasks）
+
+**事件**：實作完整的例行性任務系統，支援每日/每週/每月/每年重複
+
+**新增功能**：
+
+1. **資料庫欄位擴充**
+   - `recurrence_type`：重複類型（none/daily/weekly/monthly/yearly）
+   - `recurrence_config`：重複設定（JSONB，可設定週幾、間隔等）
+   - `parent_task_id`：父任務 ID（用於追蹤重複任務來源）
+   - `is_recurring_instance`：是否為重複產生的實例
+
+2. **自動產生下一個任務**
+   - 完成例行任務時，系統自動建立下一個任務
+   - 開始日和截止日同時推進（保持原本間隔）
+   - `calculateNextDueDate()` 函數處理日期計算
+
+3. **RecurrenceSelector UI 元件**
+   - 下拉選單選擇重複類型
+   - 每週可選擇特定週幾（週一到週日）
+   - 顯示目前設定（如「每週 一、三、五」）
+
+4. **RecurrenceBadge 標籤元件**
+   - 任務卡片上顯示重複標記
+   - 藍色背景 + 循環圖示
+
+5. **AI 自動辨識例行任務**
+   - 「每天」「每日」「daily」「天天」「日常」→ daily
+   - 「每週」「每週X」「每星期」「週週」→ weekly
+   - 「每月」「每個月」「月月」→ monthly
+
+**新增檔案**：
+- `supabase/migrations/20251204_add_recurrence.sql` - 資料庫遷移
+- `src/components/task/RecurrenceSelector.tsx` - 重複選擇器元件
+
+**修改檔案**：
+- `src/lib/supabase-api.ts` - 新增 RecurrenceConfig、completeRecurring API
+- `src/lib/useSupabaseTasks.ts` - 新增 RecurrenceType、更新 completeTask
+- `app/tasks/page.tsx` - 整合 RecurrenceSelector 和 RecurrenceBadge
+- `src/lib/openai.ts` - 新增例行性任務辨識規則
+- `src/lib/store.ts` - ExtractedTask 新增 recurrence_type
+- `src/components/chat/ChatWindow.tsx` - 傳遞 recurrenceType 到 addTask
+
+**技術細節**：
+| 項目 | 實作方式 |
+|-----|---------|
+| 日期計算 | `calculateNextDueDate()` 根據類型加 1 天/週/月/年 |
+| 週幾選擇 | `recurrence_config.weekdays` 陣列（1=週一, 7=週日）|
+| 完成流程 | `completeRecurring()` 同時完成並建立下一個 |
+| AI 辨識 | Prompt 關鍵字匹配 + recurrence_type 欄位 |
+
+**使用方式**：
+1. 在任務詳情中點擊「不重複」按鈕
+2. 選擇重複頻率（每天/每週/每月/每年）
+3. 若選每週，可點選特定週幾
+4. 完成任務時，系統自動產生下一個
+
+---
+
 ## 2025-12-01
 
 ### 📅 Apple Calendar 風格行事曆

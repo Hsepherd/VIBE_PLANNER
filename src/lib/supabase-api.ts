@@ -25,6 +25,15 @@ export interface DbProject {
   updated_at: string
 }
 
+// 例行性任務設定
+export interface RecurrenceConfig {
+  interval?: number         // 間隔數量（例如每 1 天、每 2 週）
+  weekdays?: number[]       // 週幾執行（1=週一, 7=週日），僅 weekly 使用
+  monthDay?: number         // 每月幾號，僅 monthly 使用
+  endDate?: string          // 結束日期（可選）
+  maxOccurrences?: number   // 最大次數（可選）
+}
+
 export interface DbTask {
   id: string
   title: string
@@ -41,6 +50,11 @@ export interface DbTask {
   created_at: string
   updated_at: string
   completed_at: string | null
+  // 例行性任務欄位
+  recurrence_type: 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly' | null
+  recurrence_config: RecurrenceConfig | null
+  parent_task_id: string | null
+  is_recurring_instance: boolean
 }
 
 export interface DbConversation {
@@ -203,6 +217,7 @@ export const tasksApi = {
   // 更新任務
   async update(id: string, updates: Partial<DbTask>): Promise<DbTask> {
     const supabase = getSupabase()
+    console.log('[tasksApi.update] 更新任務:', id, updates)
     const { data, error } = await supabase
       .from('tasks')
       .update(updates)
@@ -210,7 +225,10 @@ export const tasksApi = {
       .select()
       .single()
 
-    if (error) throw error
+    if (error) {
+      console.error('[tasksApi.update] 錯誤:', error.message, error.code, error.details)
+      throw error
+    }
     return data
   },
 
@@ -237,6 +255,130 @@ export const tasksApi = {
     const { error } = await supabase.from('tasks').delete().eq('id', id)
     if (error) throw error
   },
+
+  // 完成例行任務並自動建立下一個
+  async completeRecurring(id: string): Promise<{ completedTask: DbTask; nextTask?: DbTask }> {
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
+
+    // 1. 取得原任務資料
+    const { data: task, error: getError } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('id', id)
+      .single()
+
+    if (getError) throw getError
+
+    // 2. 完成原任務
+    const { data: completedTask, error: completeError } = await supabase
+      .from('tasks')
+      .update({
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (completeError) throw completeError
+
+    // 3. 如果是例行任務，建立下一個任務
+    if (task.recurrence_type && task.recurrence_type !== 'none') {
+      const nextDueDate = calculateNextDueDate(
+        task.due_date || task.start_date || new Date().toISOString(),
+        task.recurrence_type,
+        task.recurrence_config as RecurrenceConfig | null
+      )
+      const nextStartDate = calculateNextDueDate(
+        task.start_date || task.due_date || new Date().toISOString(),
+        task.recurrence_type,
+        task.recurrence_config as RecurrenceConfig | null
+      )
+
+      // 檢查是否超過結束日期或最大次數
+      const config = task.recurrence_config as RecurrenceConfig | null
+      if (config?.endDate && new Date(nextDueDate) > new Date(config.endDate)) {
+        return { completedTask }
+      }
+
+      // 建立下一個例行任務
+      const nextTaskData = {
+        title: task.title,
+        description: task.description,
+        status: 'pending' as const,
+        priority: task.priority,
+        start_date: nextStartDate,
+        due_date: nextDueDate,
+        assignee: task.assignee,
+        project_id: task.project_id,
+        tags: task.tags,
+        group_name: task.group_name,
+        recurrence_type: task.recurrence_type,
+        recurrence_config: task.recurrence_config,
+        parent_task_id: task.parent_task_id || task.id, // 保留原始任務作為 parent
+        is_recurring_instance: true,
+      }
+
+      const insertData = userId ? { ...nextTaskData, user_id: userId } : nextTaskData
+      const { data: nextTask, error: createError } = await supabase
+        .from('tasks')
+        .insert(insertData)
+        .select()
+        .single()
+
+      if (createError) throw createError
+      return { completedTask, nextTask }
+    }
+
+    return { completedTask }
+  },
+}
+
+// 計算下一個執行日期
+function calculateNextDueDate(
+  currentDate: string,
+  recurrenceType: string,
+  config: RecurrenceConfig | null
+): string {
+  const date = new Date(currentDate)
+  const interval = config?.interval || 1
+
+  switch (recurrenceType) {
+    case 'daily':
+      date.setDate(date.getDate() + interval)
+      break
+    case 'weekly':
+      if (config?.weekdays && config.weekdays.length > 0) {
+        // 找到下一個指定的週幾
+        const currentDay = date.getDay() || 7 // 週日 = 7
+        const sortedWeekdays = [...config.weekdays].sort((a, b) => a - b)
+        let nextDay = sortedWeekdays.find(d => d > currentDay)
+        if (!nextDay) {
+          // 到下週
+          nextDay = sortedWeekdays[0]
+          date.setDate(date.getDate() + (7 - currentDay + nextDay))
+        } else {
+          date.setDate(date.getDate() + (nextDay - currentDay))
+        }
+      } else {
+        date.setDate(date.getDate() + 7 * interval)
+      }
+      break
+    case 'monthly':
+      if (config?.monthDay) {
+        date.setMonth(date.getMonth() + interval)
+        date.setDate(config.monthDay)
+      } else {
+        date.setMonth(date.getMonth() + interval)
+      }
+      break
+    case 'yearly':
+      date.setFullYear(date.getFullYear() + interval)
+      break
+  }
+
+  return date.toISOString()
 }
 
 // ============ Chat Sessions API ============
