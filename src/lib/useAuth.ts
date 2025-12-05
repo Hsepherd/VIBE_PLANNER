@@ -23,14 +23,23 @@ export function useAuth() {
   useEffect(() => {
     const getUser = async () => {
       try {
-        const { data: { user }, error } = await supabase.auth.getUser()
+        // 加入超時處理，避免 CORS 錯誤時卡住
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Auth timeout')), 5000)
+        })
+
+        const authPromise = supabase.auth.getUser()
+
+        const { data: { user }, error } = await Promise.race([authPromise, timeoutPromise]) as Awaited<typeof authPromise>
+
         // 未登入不算錯誤，只是沒有 user
         if (error && error.message !== 'Auth session missing!') {
           console.error('取得使用者失敗:', error)
         }
         setState({ user: user ?? null, isLoading: false, error: null })
       } catch (err) {
-        // 靜默處理未登入的情況
+        // 超時或 CORS 錯誤時，直接設為未登入狀態
+        console.warn('Auth 初始化失敗（可能是網路問題）:', err)
         setState({ user: null, isLoading: false, error: null })
       }
     }

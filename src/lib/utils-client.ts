@@ -119,9 +119,29 @@ export interface TaskCategorization {
   reason: string
 }
 
+// ============ 任務更新的類型 ============
+export interface TaskUpdateData {
+  title?: string
+  description?: string
+  due_date?: string
+  priority?: 'low' | 'medium' | 'high' | 'urgent'
+  assignee?: string
+  project?: string
+}
+
+// ============ 任務搜尋結果的類型 ============
+export interface TaskSearchResult {
+  task_id: string
+  task_title: string
+  task_project: string | null
+  task_assignee: string | null
+  task_due_date: string | null
+  match_reason: string
+}
+
 // 解析 AI 回應
 export function parseAIResponse(response: string): {
-  type: 'tasks_extracted' | 'task_categorization' | 'chat'
+  type: 'tasks_extracted' | 'task_categorization' | 'task_update' | 'task_search' | 'chat'
   tasks?: Array<{
     title: string
     description?: string
@@ -135,6 +155,16 @@ export function parseAIResponse(response: string): {
     description?: string
   }>
   categorizations?: TaskCategorization[]
+  // task_update 專用欄位
+  task_id?: string
+  task_title?: string
+  updates?: TaskUpdateData
+  reason?: string
+  // task_search 專用欄位
+  search_query?: string
+  matched_tasks?: TaskSearchResult[]
+  intended_updates?: TaskUpdateData
+  update_reason?: string
   message: string
 } {
   try {

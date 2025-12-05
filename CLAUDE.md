@@ -73,3 +73,56 @@ vibe-planner/
 
 - `/update` - 更新專案進度與日誌
 - `/status` - 報告專案進度
+
+---
+
+## MCP Chrome DevTools 設定與使用
+
+### 設定方式（一次性）
+
+```bash
+claude mcp add chrome-devtools -s user -- npx chrome-devtools-mcp@latest
+```
+
+設定完成後**必須重啟 Claude Code**，MCP server 只在 session 初始化時載入。
+
+### 使用前提
+
+1. Chrome 瀏覽器必須以 remote debugging 模式開啟：
+   ```bash
+   open -a "Google Chrome" --args --remote-debugging-port=9222
+   ```
+2. 或讓 MCP 自動開啟 headless Chrome
+
+### 常用工具
+
+| 工具 | 功能 |
+|-----|------|
+| `mcp__chrome-devtools__list_pages` | 列出所有頁面 |
+| `mcp__chrome-devtools__select_page` | 選擇頁面（用 pageIdx） |
+| `mcp__chrome-devtools__navigate_page` | 導航到 URL |
+| `mcp__chrome-devtools__new_page` | 開新頁面 |
+| `mcp__chrome-devtools__take_screenshot` | 截圖 |
+| `mcp__chrome-devtools__take_snapshot` | 取得 a11y tree |
+| `mcp__chrome-devtools__click` | 點擊元素（用 uid） |
+| `mcp__chrome-devtools__fill` | 填寫表單 |
+| `mcp__chrome-devtools__list_console_messages` | 查看 console |
+| `mcp__chrome-devtools__list_network_requests` | 查看網路請求 |
+
+### 標準流程
+
+```
+1. mcp__chrome-devtools__list_pages          # 列出頁面
+2. mcp__chrome-devtools__select_page         # 選擇頁面
+3. mcp__chrome-devtools__navigate_page       # 導航到目標 URL
+4. mcp__chrome-devtools__take_screenshot     # 截圖確認
+5. mcp__chrome-devtools__take_snapshot       # 取得元素 uid
+6. mcp__chrome-devtools__click / fill        # 操作元素
+```
+
+### 注意事項
+
+- **不要用** `@modelcontextprotocol/server-puppeteer`（已 deprecated）
+- **不要用** `puppeteer-mcp-server`（連線不穩定）
+- **正確套件**：`chrome-devtools-mcp@latest`
+- 遇到 timeout 超過 10 秒，換方法不要等

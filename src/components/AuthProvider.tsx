@@ -51,8 +51,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return <>{children}</>
   }
 
-  // 需要登入但還沒準備好
+  // 需要登入但還沒準備好（給 3 秒超時，避免卡住）
   if (!isReady || !user) {
+    // 超時保護：3 秒後強制導向登入頁
+    if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        if (!user) {
+          window.location.href = '/login'
+        }
+      }, 3000)
+    }
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -28,6 +28,8 @@ export default function ProjectsPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const [isAdding, setIsAdding] = useState(false)
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const handleAddProject = async () => {
     if (!newProjectName.trim()) return
@@ -161,59 +163,67 @@ export default function ProjectsPage() {
               const isEditing = editingId === project.id
 
               return (
-                <Card key={project.id} className="relative">
+                <Card
+                  key={project.id}
+                  className="relative group"
+                  onMouseEnter={() => setHoveredId(project.id)}
+                  onMouseLeave={() => setHoveredId(null)}
+                >
                   <CardHeader className="pb-2">
                     <div className="flex items-start justify-between">
                       {isEditing ? (
-                        <div className="flex items-center gap-2 flex-1">
-                          <Input
+                        <div className="flex items-start gap-2 flex-1">
+                          <textarea
+                            ref={textareaRef}
                             value={editingName}
                             onChange={(e) => setEditingName(e.target.value)}
-                            className="h-8"
+                            className="flex-1 min-h-[32px] max-h-[120px] px-3 py-1.5 text-lg font-semibold rounded-md border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring"
                             autoFocus
+                            rows={1}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSaveEdit(project.id)
+                              // ⌘/Ctrl + Enter 送出
+                              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                                e.preventDefault()
+                                handleSaveEdit(project.id)
+                              }
                               if (e.key === 'Escape') handleCancelEdit()
                             }}
+                            onBlur={() => {
+                              // 失去焦點時自動儲存
+                              if (editingName.trim() && editingName.trim() !== project.name) {
+                                handleSaveEdit(project.id)
+                              } else {
+                                handleCancelEdit()
+                              }
+                            }}
                           />
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8"
-                            onClick={() => handleSaveEdit(project.id)}
-                          >
-                            <Check className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8"
-                            onClick={handleCancelEdit}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
                         </div>
                       ) : (
                         <>
-                          <CardTitle className="text-lg">{project.name}</CardTitle>
-                          <div className="flex items-center gap-1">
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-8 w-8"
+                          <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                            <CardTitle className="text-lg truncate">{project.name}</CardTitle>
+                            {/* Hover 時顯示編輯按鈕 */}
+                            <button
+                              className={`p-1 rounded hover:bg-gray-100 transition-all shrink-0 ${
+                                hoveredId === project.id ? 'opacity-100' : 'opacity-0'
+                              }`}
                               onClick={() => handleStartEdit(project.id, project.name)}
+                              title="編輯專案名稱"
                             >
-                              <Edit2 className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                              onClick={() => handleDelete(project.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                              <Edit2 className="h-3.5 w-3.5 text-gray-500" />
+                            </button>
                           </div>
+                          {/* 刪除按鈕 - hover 時顯示 */}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className={`h-8 w-8 text-muted-foreground hover:text-destructive shrink-0 transition-opacity ${
+                              hoveredId === project.id ? 'opacity-100' : 'opacity-0'
+                            }`}
+                            onClick={() => handleDelete(project.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </>
                       )}
                     </div>

@@ -22,6 +22,7 @@ interface Message {
 export function useConversationSummary() {
   const [isSummarizing, setIsSummarizing] = useState(false)
   const [lastSummary, setLastSummary] = useState<string | null>(null)
+  const [summaryCount, setSummaryCount] = useState(0)  // 追蹤摘要次數
   const cacheRef = useRef<SummaryCache | null>(null)
 
   // 計算訊息總字數
@@ -54,6 +55,7 @@ export function useConversationSummary() {
 
       if (data.success && data.summary) {
         setLastSummary(data.summary)
+        setSummaryCount(prev => prev + 1)  // 增加摘要次數
         return data.summary
       }
 
@@ -149,22 +151,50 @@ export function useConversationSummary() {
   const clearCache = useCallback(() => {
     cacheRef.current = null
     setLastSummary(null)
+    setSummaryCount(0)  // 重置摘要次數
   }, [])
 
   // 取得目前狀態資訊
   const getStats = useCallback((messages: Message[]) => {
     const totalChars = calculateTotalChars(messages)
+    const rawPercentage = Math.round((totalChars / CHAR_THRESHOLD) * 100)
+    // 估算 tokens（中文約 1.5 字元/token，英文約 4 字元/token，取平均約 2.5）
+    const estimatedTokens = Math.round(totalChars / 2.5)
+    const maxTokens = Math.round(CHAR_THRESHOLD / 2.5) // 約 20k tokens
+    const remainingTokens = Math.max(0, maxTokens - estimatedTokens)
+    const usedTokens = estimatedTokens
+
+    // 格式化 tokens 顯示（例如 45k, 12.5k）
+    const formatTokens = (tokens: number) => {
+      if (tokens >= 1000) {
+        const k = tokens / 1000
+        return k >= 10 ? `${Math.round(k)}k` : `${Math.round(k * 10) / 10}k`
+      }
+      return `${tokens}`
+    }
+
     return {
       totalChars,
       threshold: CHAR_THRESHOLD,
       willTriggerSummary: totalChars > CHAR_THRESHOLD,
-      percentageUsed: Math.round((totalChars / CHAR_THRESHOLD) * 100),
+      percentageUsed: Math.min(rawPercentage, 100), // 上限 100%
+      isOverThreshold: rawPercentage > 100,
+      overflowMultiple: rawPercentage > 100 ? Math.round(rawPercentage / 100 * 10) / 10 : null, // 例如 5.4 倍
+      // Claude Code 風格的 token 統計
+      estimatedTokens,
+      maxTokens,
+      remainingTokens,
+      usedTokens,
+      remainingTokensDisplay: formatTokens(remainingTokens),
+      usedTokensDisplay: formatTokens(usedTokens),
+      maxTokensDisplay: formatTokens(maxTokens),
     }
   }, [calculateTotalChars])
 
   return {
     isSummarizing,
     lastSummary,
+    summaryCount,
     needsSummary,
     prepareMessagesForAPI,
     clearCache,

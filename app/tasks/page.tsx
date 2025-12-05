@@ -38,11 +38,17 @@ import { zhTW } from 'date-fns/locale'
 import {
   DndContext,
   closestCenter,
+  pointerWithin,
+  rectIntersection,
   KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
+  useDroppable,
+  DragOverlay,
   type DragEndEvent,
+  type DragStartEvent,
+  type CollisionDetection,
 } from '@dnd-kit/core'
 import {
   arrayMove,
@@ -82,11 +88,21 @@ import {
   CheckSquare,
   Square,
   Edit3,
+  Pencil,
   GripVertical,
   Undo2,
+  LayoutGrid,
+  ChevronsUpDown,
+  ChevronUp,
 } from 'lucide-react'
 
 type SortMode = 'priority' | 'dueDate' | 'assignee' | 'tag' | 'group' | 'project'
+
+// 二次排序欄位
+type SecondarySort = {
+  field: 'title' | 'assignee' | 'startDate' | 'dueDate' | 'priority' | null
+  direction: 'asc' | 'desc'
+}
 
 // 優先級設定
 const priorityConfig = {
@@ -201,6 +217,7 @@ function TaskDetailDialog({
   onAddGroup,
   onRemoveGroup,
   projects,
+  onAddProject,
 }: {
   task: Task | null
   onClose: () => void
@@ -216,13 +233,17 @@ function TaskDetailDialog({
   onAddGroup: (name: string, color: string) => void
   onRemoveGroup: (name: string) => void
   projects: Project[]
+  onAddProject: (name: string) => Promise<Project | null>
 }) {
   // 本地狀態用於編輯
   const [localTask, setLocalTask] = useState<Task | null>(null)
   const [showMemberManager, setShowMemberManager] = useState(false)
   const [showTagManager, setShowTagManager] = useState(false)
   const [showGroupManager, setShowGroupManager] = useState(false)
+  const [showProjectManager, setShowProjectManager] = useState(false)
   const [newMemberName, setNewMemberName] = useState('')
+  const [newProjectName, setNewProjectName] = useState('')
+  const [isAddingProject, setIsAddingProject] = useState(false)
   const [newTagName, setNewTagName] = useState('')
   const [newTagColor, setNewTagColor] = useState('gray')
   const [newGroupName, setNewGroupName] = useState('')
@@ -232,6 +253,9 @@ function TaskDetailDialog({
   // 編輯模式狀態
   const [editingStepIndex, setEditingStepIndex] = useState<number | null>(null)
   const [editingStepText, setEditingStepText] = useState('')
+  // 編輯任務名稱
+  const [isEditingTitle, setIsEditingTitle] = useState(false)
+  const [editingTitle, setEditingTitle] = useState('')
 
   // 當 task 變化時更新本地狀態
   useEffect(() => {
@@ -270,9 +294,43 @@ function TaskDetailDialog({
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col bg-white rounded-xl shadow-xl border-0">
         <DialogHeader className="pb-4 border-b border-gray-100 shrink-0">
           <div className="flex-1">
-            <DialogTitle className="text-xl font-bold leading-relaxed pr-8 text-gray-900">
-              {localTask.title}
-            </DialogTitle>
+            {isEditingTitle ? (
+              <div className="flex items-center gap-2 pr-8">
+                <Input
+                  value={editingTitle}
+                  onChange={(e) => setEditingTitle(e.target.value)}
+                  className="text-xl font-bold h-auto py-1 px-2"
+                  autoFocus
+                  onKeyDown={async (e) => {
+                    if (e.key === 'Enter' && editingTitle.trim()) {
+                      e.preventDefault()
+                      await handleUpdate({ title: editingTitle.trim() })
+                      setIsEditingTitle(false)
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault()
+                      setIsEditingTitle(false)
+                      setEditingTitle(localTask.title)
+                    }
+                  }}
+                  onBlur={async () => {
+                    if (editingTitle.trim() && editingTitle.trim() !== localTask.title) {
+                      await handleUpdate({ title: editingTitle.trim() })
+                    }
+                    setIsEditingTitle(false)
+                  }}
+                />
+              </div>
+            ) : (
+              <DialogTitle
+                className="text-xl font-bold leading-relaxed pr-8 text-gray-900 cursor-pointer hover:bg-gray-100 rounded px-2 py-1 -mx-2 -my-1 transition-colors"
+                onClick={() => {
+                  setEditingTitle(localTask.title)
+                  setIsEditingTitle(true)
+                }}
+              >
+                {localTask.title}
+              </DialogTitle>
+            )}
             <div className="flex items-center gap-2 mt-3 flex-wrap">
               {/* 優先級選擇 */}
               <DropdownMenu>
@@ -612,23 +670,91 @@ function TaskDetailDialog({
                     {localTask.projectId ? '更換專案' : '專案'}
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-48">
-                  <DropdownMenuItem onClick={() => handleUpdate({ projectId: undefined })} className="text-muted-foreground">
-                    <X className="h-4 w-4 mr-2" />
-                    不指定
-                  </DropdownMenuItem>
-                  {projects.length > 0 && <DropdownMenuSeparator />}
-                  {projects.filter(p => p.status === 'active').map((project) => (
-                    <DropdownMenuItem
-                      key={project.id}
-                      onClick={() => handleUpdate({ projectId: project.id })}
-                      className={localTask.projectId === project.id ? 'bg-muted' : ''}
-                    >
-                      <FolderKanban className="h-4 w-4 mr-2 text-violet-500" />
-                      {project.name}
-                      {localTask.projectId === project.id && <Check className="h-4 w-4 ml-auto" />}
-                    </DropdownMenuItem>
-                  ))}
+                <DropdownMenuContent align="start" className="w-56">
+                  {showProjectManager ? (
+                    <div className="p-3 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-medium text-sm">新增專案</h4>
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => {
+                          setShowProjectManager(false)
+                          setNewProjectName('')
+                        }}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          value={newProjectName}
+                          onChange={(e) => setNewProjectName(e.target.value)}
+                          placeholder="專案名稱..."
+                          className="h-8 text-sm flex-1"
+                          autoFocus
+                          onKeyDown={async (e) => {
+                            if (e.key === 'Enter' && newProjectName.trim()) {
+                              e.preventDefault()
+                              setIsAddingProject(true)
+                              const newProject = await onAddProject(newProjectName.trim())
+                              if (newProject) {
+                                handleUpdate({ projectId: newProject.id })
+                              }
+                              setNewProjectName('')
+                              setShowProjectManager(false)
+                              setIsAddingProject(false)
+                            }
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          className="h-8"
+                          disabled={!newProjectName.trim() || isAddingProject}
+                          onClick={async () => {
+                            if (newProjectName.trim()) {
+                              setIsAddingProject(true)
+                              const newProject = await onAddProject(newProjectName.trim())
+                              if (newProject) {
+                                handleUpdate({ projectId: newProject.id })
+                              }
+                              setNewProjectName('')
+                              setShowProjectManager(false)
+                              setIsAddingProject(false)
+                            }
+                          }}
+                        >
+                          {isAddingProject ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <DropdownMenuItem onClick={() => handleUpdate({ projectId: undefined })} className="text-muted-foreground">
+                        <X className="h-4 w-4 mr-2" />
+                        不指定
+                      </DropdownMenuItem>
+                      {projects.length > 0 && <DropdownMenuSeparator />}
+                      {projects.filter(p => p.status === 'active').map((project) => (
+                        <DropdownMenuItem
+                          key={project.id}
+                          onClick={() => handleUpdate({ projectId: project.id })}
+                          className={localTask.projectId === project.id ? 'bg-muted' : ''}
+                        >
+                          <FolderKanban className="h-4 w-4 mr-2 text-violet-500" />
+                          {project.name}
+                          {localTask.projectId === project.id && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                      ))}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={(e) => {
+                          e.preventDefault()
+                          setShowProjectManager(true)
+                        }}
+                        className="text-primary"
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        新增專案...
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
 
@@ -1041,15 +1167,61 @@ export default function TasksPage() {
   const { projects, addProject: addProjectToDb, deleteProject: deleteProjectFromDb } = useSupabaseProjects()
 
   const [newTaskTitle, setNewTaskTitle] = useState('')
+  const [addingInGroup, setAddingInGroup] = useState<string | null>(null) // 追蹤哪個分類正在新增任務
   const [filter, setFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed'>('all')
   const [showCompleted, setShowCompleted] = useState(false)
-  const [sortMode, setSortMode] = useState<SortMode>('dueDate')
+  // 從 localStorage 讀取排序模式，預設為截止日
+  const [sortMode, setSortModeState] = useState<SortMode>('dueDate')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [assigneeFilter, setAssigneeFilter] = useState<string | null>(null)
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
   const [projectFilter, setProjectFilter] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+
+  // 從 localStorage 初始化排序模式
+  useEffect(() => {
+    const savedSortMode = localStorage.getItem('vibe-planner-task-sort-mode')
+    if (savedSortMode && ['priority', 'dueDate', 'assignee', 'tag', 'group', 'project'].includes(savedSortMode)) {
+      setSortModeState(savedSortMode as SortMode)
+    }
+  }, [])
+
+  // 設定排序模式並保存到 localStorage
+  const setSortMode = useCallback((mode: SortMode) => {
+    setSortModeState(mode)
+    localStorage.setItem('vibe-planner-task-sort-mode', mode)
+  }, [])
+
+  // 二次排序狀態
+  const [secondarySort, setSecondarySortState] = useState<SecondarySort>({ field: null, direction: 'asc' })
+
+  // 從 localStorage 初始化二次排序
+  useEffect(() => {
+    const savedSecondarySort = localStorage.getItem('vibe-planner-task-secondary-sort')
+    if (savedSecondarySort) {
+      try {
+        const parsed = JSON.parse(savedSecondarySort)
+        if (parsed.field && ['title', 'assignee', 'startDate', 'dueDate', 'priority'].includes(parsed.field)) {
+          setSecondarySortState(parsed)
+        }
+      } catch {
+        // 忽略解析錯誤
+      }
+    }
+  }, [])
+
+  // 設定二次排序並保存到 localStorage
+  const setSecondarySort = useCallback((field: SecondarySort['field']) => {
+    setSecondarySortState(prev => {
+      const newSort: SecondarySort = {
+        field,
+        direction: prev.field === field && prev.direction === 'asc' ? 'desc' : 'asc'
+      }
+      localStorage.setItem('vibe-planner-task-secondary-sort', JSON.stringify(newSort))
+      return newSort
+    })
+  }, [])
 
   // 批次選取狀態
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set())
@@ -1131,6 +1303,21 @@ export default function TasksPage() {
     setAvailableGroups(updated)
   }, [])
 
+  // 新增專案（從任務詳情彈窗）
+  const handleAddProject = useCallback(async (name: string): Promise<Project | null> => {
+    try {
+      const newProject = await addProjectToDb({
+        name,
+        status: 'active',
+        progress: 0,
+      })
+      return newProject
+    } catch (err) {
+      console.error('新增專案失敗:', err)
+      return null
+    }
+  }, [addProjectToDb])
+
   // 過濾任務
   const filteredTasks = useMemo(() => {
     const query = searchQuery.toLowerCase().trim()
@@ -1176,6 +1363,45 @@ export default function TasksPage() {
   }, [tasks, filter, tagFilter, assigneeFilter, groupFilter, projectFilter, searchQuery])
 
   const completedTasks = useMemo(() => tasks.filter((t: Task) => t.status === 'completed'), [tasks])
+
+  // 二次排序函數
+  const sortTasksBySecondary = useCallback((tasksToSort: Task[]): Task[] => {
+    if (!secondarySort.field) return tasksToSort
+
+    const priorityOrder = { urgent: 0, high: 1, medium: 2, low: 3 }
+
+    return [...tasksToSort].sort((a, b) => {
+      let comparison = 0
+
+      switch (secondarySort.field) {
+        case 'title':
+          comparison = a.title.localeCompare(b.title, 'zh-TW')
+          break
+        case 'assignee':
+          const assigneeA = a.assignee || ''
+          const assigneeB = b.assignee || ''
+          comparison = assigneeA.localeCompare(assigneeB, 'zh-TW')
+          break
+        case 'startDate':
+          const startA = a.startDate ? new Date(a.startDate).getTime() : Infinity
+          const startB = b.startDate ? new Date(b.startDate).getTime() : Infinity
+          comparison = startA - startB
+          break
+        case 'dueDate':
+          const dueA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity
+          const dueB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity
+          comparison = dueA - dueB
+          break
+        case 'priority':
+          const prioA = priorityOrder[a.priority as keyof typeof priorityOrder] ?? 4
+          const prioB = priorityOrder[b.priority as keyof typeof priorityOrder] ?? 4
+          comparison = prioA - prioB
+          break
+      }
+
+      return secondarySort.direction === 'asc' ? comparison : -comparison
+    })
+  }, [secondarySort])
 
   // 取得所有使用中的標籤
   const usedTags = useMemo(() => {
@@ -1321,16 +1547,23 @@ export default function TasksPage() {
     return groups
   }, [filteredTasks])
 
-  // 依專案分組
+  // 依專案分組（使用專案 ID 作為 key，方便拖曳識別）
   const groupedByProject = useMemo(() => {
-    const projectGroups: Record<string, Task[]> = { '未分類': [] }
+    const projectGroups: Record<string, Task[]> = { 'uncategorized': [] }
     filteredTasks.forEach((task: Task) => {
-      const projectName = getProjectName(task.projectId) || '未分類'
-      if (!projectGroups[projectName]) projectGroups[projectName] = []
-      projectGroups[projectName].push(task)
+      const projectId = task.projectId || 'uncategorized'
+      if (!projectGroups[projectId]) projectGroups[projectId] = []
+      projectGroups[projectId].push(task)
     })
     return projectGroups
-  }, [filteredTasks, getProjectName])
+  }, [filteredTasks])
+
+  // 專案 ID 對應顯示名稱
+  const getProjectDisplayName = useCallback((projectId: string) => {
+    if (projectId === 'uncategorized') return '未分類'
+    const project = projects.find(p => p.id === projectId)
+    return project?.name || projectId
+  }, [projects])
 
   // 新增任務
   const handleAddTask = async () => {
@@ -1342,6 +1575,61 @@ export default function TasksPage() {
         priority: 'medium',
       })
       setNewTaskTitle('')
+    } catch (err) {
+      console.error('新增任務失敗:', err)
+    }
+  }
+
+  // 在分類中新增任務（接受來自 AddTaskRow 的數據）
+  const handleAddTaskInGroup = async (
+    groupKey: string,
+    data: { title: string; assignee?: string; startDate?: Date; dueDate?: Date; priority: Task['priority'] }
+  ) => {
+    if (!data.title.trim()) return
+    try {
+      const taskData: Partial<Task> = {
+        title: data.title.trim(),
+        status: 'in_progress',
+        priority: data.priority,
+        assignee: data.assignee,
+        startDate: data.startDate?.toISOString(),
+        dueDate: data.dueDate?.toISOString(),
+      }
+
+      // 根據目前的分類模式設定預設值（如果用戶沒有手動選擇）
+      if (sortMode === 'project') {
+        // groupKey 現在是專案 ID 或 'uncategorized'
+        if (groupKey !== 'uncategorized') {
+          taskData.projectId = groupKey
+        }
+      } else if (sortMode === 'assignee') {
+        if (groupKey !== 'noAssignee' && !data.assignee) {
+          taskData.assignee = groupKey
+        }
+      } else if (sortMode === 'priority') {
+        if (['urgent', 'high', 'medium', 'low'].includes(groupKey) && data.priority === 'medium') {
+          taskData.priority = groupKey as Task['priority']
+        }
+      } else if (sortMode === 'group') {
+        if (groupKey !== 'noGroup') {
+          taskData.groupName = groupKey
+        }
+      } else if (sortMode === 'dueDate') {
+        // 根據日期分組設定截止日（如果用戶沒有手動選擇）
+        if (!data.dueDate) {
+          if (groupKey === 'today') {
+            taskData.dueDate = new Date().toISOString()
+          } else if (groupKey === 'tomorrow') {
+            taskData.dueDate = addDays(new Date(), 1).toISOString()
+          } else if (groupKey.startsWith('date_')) {
+            const dateStr = groupKey.replace('date_', '')
+            taskData.dueDate = new Date(dateStr).toISOString()
+          }
+        }
+      }
+
+      await addTask(taskData as Parameters<typeof addTask>[0])
+      setAddingInGroup(null)
     } catch (err) {
       console.error('新增任務失敗:', err)
     }
@@ -1653,6 +1941,8 @@ export default function TasksPage() {
 
   // 任務順序狀態（本地排序用）
   const [taskOrder, setTaskOrder] = useState<string[]>([])
+  // 正在拖曳的任務 ID
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
 
   // 當任務變更時同步順序
   useEffect(() => {
@@ -1665,17 +1955,78 @@ export default function TasksPage() {
     })
   }, [tasks])
 
-  // 拖曳結束處理 - 實際更新順序
+  // 自定義 collision detection：優先檢測專案標題 droppable
+  const customCollisionDetection: CollisionDetection = useCallback((args) => {
+    // 使用 rectIntersection 檢測所有碰撞
+    const rectCollisions = rectIntersection(args)
+
+    // 優先查找專案標題碰撞（ID 以 project- 開頭）
+    const projectCollision = rectCollisions.find(
+      collision => (collision.id as string).startsWith('project-')
+    )
+    if (projectCollision) {
+      return [projectCollision]
+    }
+
+    // 如果沒有碰到專案標題，再用 pointerWithin 精確檢測
+    const pointerCollisions = pointerWithin(args)
+    const preciseProjectCollision = pointerCollisions.find(
+      collision => (collision.id as string).startsWith('project-')
+    )
+    if (preciseProjectCollision) {
+      return [preciseProjectCollision]
+    }
+
+    // 如果都沒有，使用 closestCenter 處理排序
+    return closestCenter(args)
+  }, [])
+
+  // 拖曳開始處理
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    setActiveTaskId(event.active.id as string)
+  }, [])
+
+  // 拖曳結束處理 - 支援跨專案拖曳
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event
-    if (over && active.id !== over.id) {
+    setActiveTaskId(null)
+
+    console.log('[DragEnd] active:', active.id, 'over:', over?.id)
+
+    if (!over) {
+      console.log('[DragEnd] No over target')
+      return
+    }
+
+    const activeId = active.id as string
+    const overId = over.id as string
+
+    console.log('[DragEnd] activeId:', activeId, 'overId:', overId, 'startsWithProject:', overId.startsWith('project-'))
+
+    // 檢查是否拖曳到專案分組標題上（ID 以 project- 開頭）
+    if (overId.startsWith('project-')) {
+      const targetProjectId = overId.replace('project-', '')
+      const newProjectId = targetProjectId === 'uncategorized' ? undefined : targetProjectId
+
+      console.log('[DragEnd] Moving task to project:', targetProjectId, 'newProjectId:', newProjectId)
+
+      // 更新任務的專案
+      handleUpdateTask(activeId, { projectId: newProjectId })
+      return
+    }
+
+    // 同一列表內的排序
+    if (activeId !== overId) {
       setTaskOrder(prev => {
-        const oldIndex = prev.indexOf(active.id as string)
-        const newIndex = prev.indexOf(over.id as string)
-        return arrayMove(prev, oldIndex, newIndex)
+        const oldIndex = prev.indexOf(activeId)
+        const newIndex = prev.indexOf(overId)
+        if (oldIndex !== -1 && newIndex !== -1) {
+          return arrayMove(prev, oldIndex, newIndex)
+        }
+        return prev
       })
     }
-  }, [])
+  }, [handleUpdateTask])
 
   // 可拖曳的任務項目組件 - 單行設計
   const SortableTaskItem = ({ task }: { task: Task }) => {
@@ -1704,6 +2055,8 @@ export default function TasksPage() {
     const [projectOpen, setProjectOpen] = useState(false)
     const [priorityOpen, setPriorityOpen] = useState(false)
     const [statusOpen, setStatusOpen] = useState(false)
+    const [isEditingTitle, setIsEditingTitle] = useState(false)
+    const [editingTitle, setEditingTitle] = useState(task.title)
     const isSelected = selectedTaskIds.has(task.id)
 
     const currentStatus = statusColors[task.status] || statusColors.pending
@@ -1772,18 +2125,61 @@ export default function TasksPage() {
 
         {/* 標題 - 彈性寬度 */}
         <div className="flex-1 min-w-0 h-12 flex items-center pr-4">
-          <div className="flex items-center gap-2 min-w-0">
-            <span
-              className={`text-sm truncate cursor-pointer hover:text-blue-600 ${
-                task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-800'
-              }`}
-              onClick={() => setSelectedTask(task)}
-            >
-              {task.title}
-            </span>
-            {/* 例行任務標籤 */}
-            <RecurrenceBadge type={task.recurrenceType} config={task.recurrenceConfig} />
-          </div>
+          {isEditingTitle ? (
+            <textarea
+              value={editingTitle}
+              onChange={(e) => setEditingTitle(e.target.value)}
+              className="flex-1 min-h-[32px] max-h-[120px] px-3 py-1.5 text-sm rounded-md border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+              autoFocus
+              rows={1}
+              onKeyDown={async (e) => {
+                // ⌘/Ctrl + Enter 送出
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && editingTitle.trim()) {
+                  e.preventDefault()
+                  const newTitle = editingTitle.trim()
+                  setIsEditingTitle(false)
+                  await handleUpdateTask(task.id, { title: newTitle })
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setIsEditingTitle(false)
+                  setEditingTitle(task.title)
+                }
+              }}
+              onBlur={async () => {
+                if (editingTitle.trim() && editingTitle.trim() !== task.title) {
+                  const newTitle = editingTitle.trim()
+                  await handleUpdateTask(task.id, { title: newTitle })
+                }
+                setIsEditingTitle(false)
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <div className="flex items-center gap-1 min-w-0">
+              <span
+                className={`text-sm truncate cursor-pointer hover:text-blue-600 ${
+                  task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-800'
+                }`}
+                onClick={() => setSelectedTask(task)}
+              >
+                {task.title}
+              </span>
+              {/* 編輯按鈕 - 整行 hover 時顯示 */}
+              <button
+                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-200 transition-all shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setEditingTitle(task.title)
+                  setIsEditingTitle(true)
+                }}
+                title="編輯任務名稱"
+              >
+                <Pencil className="h-3.5 w-3.5 text-gray-500" />
+              </button>
+              {/* 例行任務標籤 */}
+              <RecurrenceBadge type={task.recurrenceType} config={task.recurrenceConfig} />
+            </div>
+          )}
         </div>
 
         {/* 負責人欄位 - 動態寬度（可新增/刪除成員）*/}
@@ -1950,8 +2346,199 @@ export default function TasksPage() {
   // 為了向後兼容，TaskItem 使用 SortableTaskItem
   const TaskItem = SortableTaskItem
 
-  // 依照 taskOrder 排序任務
+  // 新增任務列組件 - ClickUp 風格（內部狀態管理，避免父組件 re-render）
+  const AddTaskRow = ({
+    groupKey,
+    teamMembers,
+    priorityConfig,
+    columnWidths,
+    onSubmit,
+    onCancel,
+  }: {
+    groupKey: string
+    teamMembers: string[]
+    priorityConfig: typeof priorityConfig
+    columnWidths: { assignee: number; startDate: number; dueDate: number; priority: number }
+    onSubmit: (data: { title: string; assignee?: string; startDate?: Date; dueDate?: Date; priority: Task['priority'] }) => void
+    onCancel: () => void
+  }) => {
+    // 所有狀態內部管理，避免輸入時觸發父組件 re-render
+    const [title, setTitle] = useState('')
+    const [assignee, setAssignee] = useState<string | undefined>(undefined)
+    const [startDate, setStartDate] = useState<Date | undefined>(undefined)
+    const [dueDate, setDueDate] = useState<Date | undefined>(undefined)
+    const [priority, setPriority] = useState<Task['priority']>('medium')
+    const [assigneeOpen, setAssigneeOpen] = useState(false)
+    const [startDateOpen, setStartDateOpen] = useState(false)
+    const [dueDateOpen, setDueDateOpen] = useState(false)
+    const [priorityOpen, setPriorityOpen] = useState(false)
+    const inputRef = useRef<HTMLInputElement>(null)
+
+    useEffect(() => {
+      inputRef.current?.focus()
+    }, [])
+
+    const formatDate = (date: Date) => {
+      if (isToday(date)) return '今天'
+      if (isTomorrow(date)) return '明天'
+      return format(date, 'M/d', { locale: zhTW })
+    }
+
+    const handleSubmit = () => {
+      if (!title.trim()) return
+      onSubmit({ title: title.trim(), assignee, startDate, dueDate, priority })
+    }
+
+    return (
+      <div className="flex items-center bg-blue-50/50 border-t border-blue-100 hover:bg-blue-50/70 transition-colors">
+        {/* 左側空間 - 與表格對齊 */}
+        <div className="w-10 shrink-0" />
+        <div className="w-8 shrink-0" />
+        <div className="w-8 shrink-0" />
+
+        {/* 任務名稱輸入 */}
+        <div className="flex-1 min-w-0 h-11 flex items-center pr-4">
+          <input
+            ref={inputRef}
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && title.trim()) handleSubmit()
+              if (e.key === 'Escape') onCancel()
+            }}
+            placeholder="輸入任務名稱，按 Enter 新增"
+            className="w-full text-sm bg-transparent border-0 outline-none placeholder:text-gray-400"
+          />
+        </div>
+
+        {/* 負責人選擇 */}
+        <div className="h-11 flex items-center shrink-0" style={{ width: columnWidths.assignee }}>
+          <Popover open={assigneeOpen} onOpenChange={setAssigneeOpen}>
+            <PopoverTrigger asChild>
+              <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
+                <User className="h-4 w-4 shrink-0" />
+                <span className="flex-1 text-left truncate">{assignee || '-'}</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-40 p-1" align="start">
+              <div className="space-y-0.5">
+                {teamMembers.map((member) => (
+                  <button
+                    key={member}
+                    onClick={() => { setAssignee(member); setAssigneeOpen(false) }}
+                    className="flex items-center w-full px-2 py-1.5 text-xs rounded hover:bg-gray-100 transition-colors"
+                  >
+                    <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-[10px] font-medium mr-2 shrink-0">
+                      {member.charAt(0).toUpperCase()}
+                    </span>
+                    <span className="truncate">{member}</span>
+                    {assignee === member && <Check className="h-3 w-3 ml-auto text-blue-600" />}
+                  </button>
+                ))}
+                {assignee && (
+                  <>
+                    <Separator className="my-1" />
+                    <button
+                      onClick={() => { setAssignee(undefined); setAssigneeOpen(false) }}
+                      className="flex items-center w-full px-2 py-1.5 text-xs text-gray-500 rounded hover:bg-gray-100 transition-colors"
+                    >
+                      清除
+                    </button>
+                  </>
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        {/* 開始日選擇 */}
+        <div className="h-11 flex items-center shrink-0" style={{ width: columnWidths.startDate }}>
+          <Popover open={startDateOpen} onOpenChange={setStartDateOpen}>
+            <PopoverTrigger asChild>
+              <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
+                <CalendarDays className="h-4 w-4 shrink-0" />
+                <span className="flex-1 text-left">{startDate ? formatDate(startDate) : '-'}</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <DateTimePicker
+                value={startDate}
+                onChange={(date) => { setStartDate(date || undefined); setStartDateOpen(false) }}
+                onClose={() => setStartDateOpen(false)}
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        {/* 截止日選擇 */}
+        <div className="h-11 flex items-center shrink-0" style={{ width: columnWidths.dueDate }}>
+          <Popover open={dueDateOpen} onOpenChange={setDueDateOpen}>
+            <PopoverTrigger asChild>
+              <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
+                <Calendar className="h-4 w-4 shrink-0" />
+                <span className="flex-1 text-left">{dueDate ? formatDate(dueDate) : '-'}</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <DateTimePicker
+                value={dueDate}
+                onChange={(date) => { setDueDate(date || undefined); setDueDateOpen(false) }}
+                onClose={() => setDueDateOpen(false)}
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        {/* 優先級選擇 */}
+        <div className="h-11 flex items-center shrink-0" style={{ width: columnWidths.priority }}>
+          <DropdownMenu open={priorityOpen} onOpenChange={setPriorityOpen}>
+            <DropdownMenuTrigger asChild>
+              <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
+                <span className="text-base shrink-0">{priorityConfig[priority].emoji}</span>
+                <span className="flex-1 text-left hidden sm:inline">{priorityConfig[priority].label}</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-28">
+              {(Object.keys(priorityConfig) as Array<keyof typeof priorityConfig>).map((key) => (
+                <DropdownMenuItem key={key} onClick={() => setPriority(key)} className="text-xs">
+                  <span className="mr-2">{priorityConfig[key].emoji}</span>{priorityConfig[key].label}
+                  {priority === key && <Check className="h-3 w-3 ml-auto" />}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* 操作按鈕 */}
+        <div className="w-12 h-11 flex items-center justify-center shrink-0 gap-1">
+          <button
+            onClick={handleSubmit}
+            disabled={!title.trim()}
+            className="p-1.5 rounded text-blue-600 hover:text-blue-700 hover:bg-white/60 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            title="新增任務"
+          >
+            <Check className="h-4 w-4" />
+          </button>
+          <button
+            onClick={onCancel}
+            className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-white/60 transition-colors"
+            title="取消"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // 依照 taskOrder 或二次排序來排序任務
   const sortTasksByOrder = useCallback((tasksToSort: Task[]) => {
+    // 如果有二次排序，優先使用二次排序
+    if (secondarySort.field) {
+      return sortTasksBySecondary(tasksToSort)
+    }
+    // 否則使用原本的拖曳順序
     return [...tasksToSort].sort((a, b) => {
       const aIndex = taskOrder.indexOf(a.id)
       const bIndex = taskOrder.indexOf(b.id)
@@ -1960,7 +2547,7 @@ export default function TasksPage() {
       if (bIndex === -1) return -1
       return aIndex - bIndex
     })
-  }, [taskOrder])
+  }, [taskOrder, secondarySort.field, sortTasksBySecondary])
 
   // 可拖曳調整寬度的分隔線元件（放在欄位左側）
   const ResizeHandle = ({ column }: { column: string }) => (
@@ -2000,32 +2587,83 @@ export default function TasksPage() {
       </div>
       {/* 狀態佔位 */}
       <div className="w-8 h-10 shrink-0" />
-      {/* 任務名稱 */}
+      {/* 任務名稱 - 可點擊排序 */}
       <div className="flex-1 min-w-0 h-10 flex items-center pr-4">
-        <span className="text-gray-500">任務名稱</span>
+        <button
+          onClick={() => setSecondarySort('title')}
+          className={`flex items-center gap-1 hover:text-gray-900 transition-colors ${secondarySort.field === 'title' ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
+        >
+          任務名稱
+          {secondarySort.field === 'title' && (
+            secondarySort.direction === 'asc'
+              ? <ChevronUp className="h-3 w-3 ml-1" />
+              : <ChevronUp className="h-3 w-3 ml-1 rotate-180" />
+          )}
+          {secondarySort.field !== 'title' && <ChevronsUpDown className="h-3 w-3 ml-1 opacity-0 group-hover:opacity-50" />}
+        </button>
       </div>
-      {/* 負責人 - 可調整寬度 */}
+      {/* 負責人 - 可調整寬度 + 可點擊排序 */}
       <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.assignee }}>
         <ResizeHandle column="assignee" />
-        <User className="h-4 w-4 shrink-0 text-gray-400 mr-2" />
-        <span className="text-gray-500">負責人</span>
+        <button
+          onClick={() => setSecondarySort('assignee')}
+          className={`flex items-center gap-1 hover:text-gray-900 transition-colors ${secondarySort.field === 'assignee' ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
+        >
+          <User className="h-4 w-4 shrink-0 mr-1" />
+          負責人
+          {secondarySort.field === 'assignee' && (
+            secondarySort.direction === 'asc'
+              ? <ChevronUp className="h-3 w-3 ml-1" />
+              : <ChevronUp className="h-3 w-3 ml-1 rotate-180" />
+          )}
+        </button>
       </div>
-      {/* 開始日期 - 可調整寬度 */}
+      {/* 開始日期 - 可調整寬度 + 可點擊排序 */}
       <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.startDate }}>
         <ResizeHandle column="startDate" />
-        <CalendarDays className="h-4 w-4 shrink-0 text-gray-400 mr-2" />
-        <span className="text-gray-500">開始日</span>
+        <button
+          onClick={() => setSecondarySort('startDate')}
+          className={`flex items-center gap-1 hover:text-gray-900 transition-colors ${secondarySort.field === 'startDate' ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
+        >
+          <CalendarDays className="h-4 w-4 shrink-0 mr-1" />
+          開始日
+          {secondarySort.field === 'startDate' && (
+            secondarySort.direction === 'asc'
+              ? <ChevronUp className="h-3 w-3 ml-1" />
+              : <ChevronUp className="h-3 w-3 ml-1 rotate-180" />
+          )}
+        </button>
       </div>
-      {/* 截止日期 - 可調整寬度 */}
+      {/* 截止日期 - 可調整寬度 + 可點擊排序 */}
       <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.dueDate }}>
         <ResizeHandle column="dueDate" />
-        <Calendar className="h-4 w-4 shrink-0 text-gray-400 mr-2" />
-        <span className="text-gray-500">截止日</span>
+        <button
+          onClick={() => setSecondarySort('dueDate')}
+          className={`flex items-center gap-1 hover:text-gray-900 transition-colors ${secondarySort.field === 'dueDate' ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
+        >
+          <Calendar className="h-4 w-4 shrink-0 mr-1" />
+          截止日
+          {secondarySort.field === 'dueDate' && (
+            secondarySort.direction === 'asc'
+              ? <ChevronUp className="h-3 w-3 ml-1" />
+              : <ChevronUp className="h-3 w-3 ml-1 rotate-180" />
+          )}
+        </button>
       </div>
-      {/* 優先級 - 可調整寬度 */}
+      {/* 優先級 - 可調整寬度 + 可點擊排序 */}
       <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.priority }}>
         <ResizeHandle column="priority" />
-        <span className="text-gray-500">優先級</span>
+        <button
+          onClick={() => setSecondarySort('priority')}
+          className={`flex items-center gap-1 hover:text-gray-900 transition-colors ${secondarySort.field === 'priority' ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
+        >
+          優先級
+          {secondarySort.field === 'priority' && (
+            secondarySort.direction === 'asc'
+              ? <ChevronUp className="h-3 w-3 ml-1" />
+              : <ChevronUp className="h-3 w-3 ml-1 rotate-180" />
+          )}
+        </button>
       </div>
       {/* 更多操作佔位 */}
       <div className="w-12 h-10 shrink-0" />
@@ -2084,12 +2722,175 @@ export default function TasksPage() {
                       {groupTasks.map((task: Task) => (
                         <SortableTaskItem key={task.id} task={task} />
                       ))}
+                      {/* 新增任務列 - ClickUp 風格 */}
+                      {addingInGroup === key ? (
+                        <AddTaskRow
+                          groupKey={key}
+                          teamMembers={teamMembers}
+                          priorityConfig={priorityConfig}
+                          columnWidths={columnWidths}
+                          onSubmit={(data) => handleAddTaskInGroup(key, data)}
+                          onCancel={() => setAddingInGroup(null)}
+                        />
+                      ) : (
+                        <button
+                          onClick={() => setAddingInGroup(key)}
+                          className="flex items-center w-full h-10 text-sm text-gray-400 hover:text-gray-600 hover:bg-gray-50/80 border-t border-gray-100 transition-colors"
+                        >
+                          {/* 與表格欄位對齊 */}
+                          <div className="w-10 shrink-0" />
+                          <div className="w-8 shrink-0" />
+                          <div className="w-8 shrink-0" />
+                          <div className="flex-1 flex items-center gap-1.5 px-2">
+                            <Plus className="h-3.5 w-3.5" />
+                            <span>新增任務</span>
+                          </div>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
               )
             })}
           </SortableContext>
+        </DndContext>
+      </div>
+    )
+  }
+
+  // Droppable 專案分組標題組件
+  const DroppableProjectHeader = ({ projectId, label, taskCount, isCollapsed, onToggle }: {
+    projectId: string
+    label: string
+    taskCount: number
+    isCollapsed: boolean
+    onToggle: () => void
+  }) => {
+    const { setNodeRef, isOver } = useDroppable({
+      id: `project-${projectId}`,
+    })
+
+    return (
+      <div
+        ref={setNodeRef}
+        data-droppable-id={`project-${projectId}`}
+        className={`relative flex items-center gap-2 w-full px-4 py-3 bg-gray-50 border-b border-gray-100 transition-all duration-200 ${
+          isOver
+            ? 'bg-blue-100 border-blue-400 border-2 shadow-md'
+            : 'hover:bg-gray-100'
+        }`}
+      >
+        <button
+          onClick={onToggle}
+          className="flex items-center gap-2 flex-1 text-left"
+        >
+          <ChevronRight className={`h-4 w-4 text-gray-400 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
+          <span className="text-sm">📁</span>
+          <span className="text-sm font-medium text-gray-700">{label}</span>
+          <span className="text-xs text-gray-400 bg-gray-200 px-1.5 py-0.5 rounded">{taskCount}</span>
+        </button>
+        {isOver && (
+          <span className="text-xs text-blue-600 font-medium animate-pulse">放開以移動到此專案</span>
+        )}
+      </div>
+    )
+  }
+
+  // 渲染專案分組任務（支援跨專案拖曳）
+  const renderProjectGroupedTasks = () => {
+    // 排序 keys：專案按字母順序，未分類放最後
+    const sortedKeys = Object.keys(groupedByProject).sort((a, b) => {
+      if (a === 'uncategorized') return 1
+      if (b === 'uncategorized') return -1
+      const nameA = getProjectDisplayName(a)
+      const nameB = getProjectDisplayName(b)
+      return nameA.localeCompare(nameB)
+    })
+
+    // 合併所有可見任務 ID 用於 SortableContext
+    const allTaskIds = sortedKeys.flatMap(key => {
+      if (collapsedGroups.has(key)) return []
+      return (groupedByProject[key] || []).map(t => t.id)
+    })
+
+    // 所有專案的 droppable ID
+    const droppableIds = sortedKeys.map(key => `project-${key}`)
+
+    // 取得目前拖曳中的任務
+    const activeTask = activeTaskId ? tasks.find(t => t.id === activeTaskId) : null
+
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+        {/* 表格標題列 */}
+        <TableHeader />
+
+        <DndContext
+          sensors={sensors}
+          collisionDetection={customCollisionDetection}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext items={[...allTaskIds, ...droppableIds]} strategy={verticalListSortingStrategy}>
+            {sortedKeys.map(key => {
+              const groupTasks = sortTasksByOrder(groupedByProject[key] || [])
+              if (!groupTasks || groupTasks.length === 0) return null
+              const label = getProjectDisplayName(key)
+              const isCollapsed = collapsedGroups.has(key)
+
+              return (
+                <div key={key}>
+                  {/* 專案分組標題 - 可接收拖曳 */}
+                  <DroppableProjectHeader
+                    projectId={key}
+                    label={label}
+                    taskCount={groupTasks.length}
+                    isCollapsed={isCollapsed}
+                    onToggle={() => toggleGroupCollapse(key)}
+                  />
+                  {/* 任務列表 - 收合時隱藏 */}
+                  {!isCollapsed && (
+                    <div>
+                      {groupTasks.map((task: Task) => (
+                        <SortableTaskItem key={task.id} task={task} />
+                      ))}
+                      {/* 新增任務列 */}
+                      {addingInGroup === key ? (
+                        <AddTaskRow
+                          groupKey={key}
+                          teamMembers={teamMembers}
+                          priorityConfig={priorityConfig}
+                          columnWidths={columnWidths}
+                          onSubmit={(data) => handleAddTaskInGroup(key, data)}
+                          onCancel={() => setAddingInGroup(null)}
+                        />
+                      ) : (
+                        <button
+                          onClick={() => setAddingInGroup(key)}
+                          className="flex items-center w-full h-10 text-sm text-gray-400 hover:text-gray-600 hover:bg-gray-50/80 border-t border-gray-100 transition-colors"
+                        >
+                          <div className="w-10 shrink-0" />
+                          <div className="w-8 shrink-0" />
+                          <div className="w-8 shrink-0" />
+                          <div className="flex-1 flex items-center gap-1.5 px-2">
+                            <Plus className="h-3.5 w-3.5" />
+                            <span>新增任務</span>
+                          </div>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </SortableContext>
+          {/* 拖曳中的任務預覽 */}
+          <DragOverlay>
+            {activeTask ? (
+              <div className="bg-white border border-blue-300 rounded-lg shadow-lg px-4 py-2 opacity-90">
+                <span className="text-sm font-medium">{activeTask.title}</span>
+              </div>
+            ) : null}
+          </DragOverlay>
         </DndContext>
       </div>
     )
@@ -2132,21 +2933,6 @@ export default function TasksPage() {
             )}
           </div>
 
-          {/* 新增任務 */}
-          <Input
-            value={newTaskTitle}
-            onChange={(e) => setNewTaskTitle(e.target.value)}
-            placeholder="輸入新任務..."
-            onKeyDown={(e) => e.key === 'Enter' && handleAddTask()}
-            className="w-64 border-gray-200 focus:border-gray-400 focus:ring-gray-400"
-          />
-          <button
-            onClick={handleAddTask}
-            className="flex items-center gap-1.5 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-md hover:bg-gray-800 transition-colors shrink-0"
-          >
-            <Plus className="h-4 w-4" />
-            新增
-          </button>
           {/* 批次選取按鈕 */}
           <button
             onClick={toggleSelectionMode}
@@ -2239,12 +3025,12 @@ export default function TasksPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* 排序模式 */}
+            {/* 分類模式 */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-md hover:bg-gray-50 transition-colors">
-                  <ArrowUpDown className="h-3.5 w-3.5" />
-                  {sortMode === 'priority' ? '優先級' : sortMode === 'dueDate' ? '截止日' : sortMode === 'assignee' ? '負責人' : sortMode === 'tag' ? '標籤' : '組別'}
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                  分類：{sortMode === 'priority' ? '優先級' : sortMode === 'dueDate' ? '截止日' : sortMode === 'assignee' ? '負責人' : sortMode === 'tag' ? '標籤' : sortMode === 'project' ? '專案' : '組別'}
                   <ChevronDown className="h-3.5 w-3.5" />
                 </button>
               </DropdownMenuTrigger>
@@ -2406,12 +3192,7 @@ export default function TasksPage() {
             }, {} as Record<string, { emoji: string; label: string }>)
           )}
 
-          {sortMode === 'project' && renderGroupedTasks(groupedByProject,
-            Object.keys(groupedByProject).reduce((acc, key) => {
-              acc[key] = { emoji: '📁', label: key }
-              return acc
-            }, {} as Record<string, { emoji: string; label: string }>)
-          )}
+          {sortMode === 'project' && renderProjectGroupedTasks()}
 
           {filteredTasks.length === 0 && filter !== 'completed' && (
             <div className="text-center py-12 text-muted-foreground">
@@ -2462,6 +3243,7 @@ export default function TasksPage() {
         onAddGroup={handleAddGroup}
         onRemoveGroup={handleRemoveGroup}
         projects={projects}
+        onAddProject={handleAddProject}
       />
 
       {/* 底部固定批次操作工具列 */}

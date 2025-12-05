@@ -273,6 +273,59 @@ description 欄位必須使用以下結構化格式，每個部分都要有：
    - 其他所有任務都應該給出分類建議
 9. **必須回傳 JSON 格式，type 必須是 "task_categorization"！**
 
+## ✏️ 任務更新功能（非常重要！）
+當使用者要求「修改任務」、「更新任務」、「補充細節」、「把XXX任務改成...」或類似請求時，
+你必須先使用 **task_search** 類型回應，讓使用者選擇要更新哪個任務。
+
+**觸發關鍵字**：修改、更新、補充、改成、加上、把...任務...
+
+**⚠️⚠️⚠️ 重要流程（必須嚴格遵守！）**：
+1. 先從上下文中的任務列表搜尋使用者提到的任務
+2. **找到所有可能匹配的任務**（標題、專案、描述中包含關鍵字的）
+3. 回傳 **task_search** 格式，讓使用者選擇是哪一個
+4. 使用者選擇後，系統會自動套用更新（不需要再確認）
+
+**回應格式**：
+\`\`\`json
+{
+  "type": "task_search",
+  "search_query": "使用者原本說的話",
+  "matched_tasks": [
+    {
+      "task_id": "任務 ID",
+      "task_title": "任務標題",
+      "task_project": "所屬專案名稱 或 null",
+      "task_assignee": "負責人 或 null",
+      "task_due_date": "截止日期 或 null",
+      "match_reason": "為什麼這個任務符合搜尋條件"
+    }
+  ],
+  "intended_updates": {
+    "description": "更新後的完整描述（保留原有內容 + 新增內容）",
+    "priority": "可選：更新優先級",
+    "due_date": "可選：更新截止日期"
+  },
+  "update_reason": "說明這次更新會做什麼",
+  "message": "給使用者的說明，例如：「我找到 2 個可能的任務，請選擇要更新哪一個：」"
+}
+\`\`\`
+
+**搜尋規則**：
+1. 從上下文中的「📅 目前的行事曆狀態」取得任務列表和 ID
+2. 搜尋標題、專案名稱、負責人中包含使用者提到的關鍵字
+3. **即使只找到 1 個任務，也要回傳 task_search 讓使用者確認**
+4. matched_tasks 中要包含**專案名稱**，這樣使用者才能區分同名任務
+5. 如果找不到任何匹配的任務，回傳 chat 類型告知使用者
+
+**範例**：
+使用者說：「把 Gemini pro 銷售頁面上架任務補充 Pay Uni 串接的細節」
+
+你應該：
+1. 在任務列表中搜尋「Gemini pro 銷售頁面」相關任務
+2. 找到 2 個同名任務（分別在「Vicky小課程」和「高音終極方程式」專案）
+3. 回傳 task_search 格式，列出這 2 個任務讓使用者選擇
+4. 在每個任務的 match_reason 說明：「標題完全匹配，屬於 XXX 專案」
+
 如果是一般對話，回應格式：
 \`\`\`json
 {
@@ -1091,9 +1144,34 @@ export interface TaskCategorization {
   reason: string
 }
 
+// 任務更新的類型
+export interface TaskUpdate {
+  task_id: string
+  task_title: string
+  updates: {
+    title?: string
+    description?: string
+    due_date?: string
+    priority?: 'low' | 'medium' | 'high' | 'urgent'
+    assignee?: string
+    project?: string
+  }
+  reason: string
+}
+
+// 任務搜尋結果的類型
+export interface TaskSearchResult {
+  task_id: string
+  task_title: string
+  task_project: string | null
+  task_assignee: string | null
+  task_due_date: string | null
+  match_reason: string
+}
+
 // 解析 AI 回應
 export function parseAIResponse(response: string): {
-  type: 'tasks_extracted' | 'task_categorization' | 'chat'
+  type: 'tasks_extracted' | 'task_categorization' | 'task_update' | 'task_search' | 'chat'
   tasks?: Array<{
     title: string
     description?: string
@@ -1108,6 +1186,16 @@ export function parseAIResponse(response: string): {
     description?: string
   }>
   categorizations?: TaskCategorization[]
+  // task_update 專用欄位
+  task_id?: string
+  task_title?: string
+  updates?: TaskUpdate['updates']
+  reason?: string
+  // task_search 專用欄位
+  search_query?: string
+  matched_tasks?: TaskSearchResult[]
+  intended_updates?: TaskUpdate['updates']
+  update_reason?: string
   message: string
 } {
   try {

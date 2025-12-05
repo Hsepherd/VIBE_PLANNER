@@ -128,6 +128,17 @@ export interface AppState {
   setPendingCategorizations: (group: PendingCategorizationGroup | null) => void
   updateCategorizationSelection: (taskId: string, selected: boolean) => void
   clearPendingCategorizations: () => void
+
+  // 待確認任務更新（AI 修改現有任務）
+  pendingTaskUpdate: PendingTaskUpdate | null
+  setPendingTaskUpdate: (update: PendingTaskUpdate | null) => void
+  clearPendingTaskUpdate: () => void
+
+  // 待確認任務搜尋（讓用戶選擇要更新哪個任務）
+  pendingTaskSearch: PendingTaskSearch | null
+  setPendingTaskSearch: (search: PendingTaskSearch | null) => void
+  selectTaskForUpdate: (taskId: string, taskTitle: string) => void  // 選擇要更新的任務
+  clearPendingTaskSearch: () => void
 }
 
 // AI 萃取任務的類型
@@ -182,6 +193,53 @@ export interface PendingCategorizationGroup {
   timestamp: Date
   categorizations: TaskCategorizationItem[]
   suggested_projects: Array<{ name: string; description?: string }>
+}
+
+// 待確認任務更新（用於 AI 更新現有任務）
+export interface PendingTaskUpdate {
+  id: string
+  timestamp: Date
+  task_id: string
+  task_title: string
+  updates: {
+    title?: string
+    description?: string
+    due_date?: string
+    priority?: 'low' | 'medium' | 'high' | 'urgent'
+    assignee?: string
+    project?: string
+  }
+  reason: string  // AI 說明為什麼要這樣更新
+}
+
+// 任務搜尋結果中的單一任務
+export interface TaskSearchResult {
+  task_id: string
+  task_title: string
+  task_project: string | null
+  task_assignee: string | null
+  task_due_date: string | null
+  match_reason: string  // AI 說明為什麼這個任務符合
+}
+
+// 待確認任務搜尋（讓用戶選擇要更新哪個任務）
+export interface PendingTaskSearch {
+  id: string
+  timestamp: Date
+  search_query: string  // 用戶原本說的話
+  matched_tasks: TaskSearchResult[]  // 匹配到的任務列表
+  intended_updates: {  // 用戶想要做的更新
+    description?: string
+    title?: string
+    due_date?: string
+    priority?: 'low' | 'medium' | 'high' | 'urgent'
+    assignee?: string
+    project?: string
+  }
+  update_reason: string  // AI 說明要怎麼更新
+  // 用戶選擇後的狀態
+  selectedTaskId?: string  // 用戶選擇的任務 ID
+  selectedTaskTitle?: string  // 用戶選擇的任務標題
 }
 
 // 生成 UUID
@@ -439,6 +497,26 @@ export const useAppStore = create<AppState>()(
             : null,
         })),
       clearPendingCategorizations: () => set({ pendingCategorizations: null }),
+
+      // 待確認任務更新
+      pendingTaskUpdate: null,
+      setPendingTaskUpdate: (update) => set({ pendingTaskUpdate: update }),
+      clearPendingTaskUpdate: () => set({ pendingTaskUpdate: null }),
+
+      // 待確認任務搜尋
+      pendingTaskSearch: null,
+      setPendingTaskSearch: (search) => set({ pendingTaskSearch: search }),
+      selectTaskForUpdate: (taskId, taskTitle) =>
+        set((state) => ({
+          pendingTaskSearch: state.pendingTaskSearch
+            ? {
+                ...state.pendingTaskSearch,
+                selectedTaskId: taskId,
+                selectedTaskTitle: taskTitle,
+              }
+            : null,
+        })),
+      clearPendingTaskSearch: () => set({ pendingTaskSearch: null }),
     }),
     {
       name: 'vibe-planner-storage',

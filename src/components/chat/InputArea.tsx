@@ -10,7 +10,7 @@ import { useSupabaseTasks } from '@/lib/useSupabaseTasks'
 import { useSupabaseProjects } from '@/lib/useSupabaseProjects'
 import { useAuth } from '@/lib/useAuth'
 import { Send, Paperclip, X, Loader2, Image as ImageIcon, Brain } from 'lucide-react'
-import { parseAIResponse, findDuplicateTask } from '@/lib/utils-client'
+import { parseAIResponse, findDuplicateTask, type TaskSearchResult } from '@/lib/utils-client'
 import { learnFromUserReply } from '@/lib/few-shot-learning'
 
 export default function InputArea() {
@@ -31,6 +31,8 @@ export default function InputArea() {
     processedTaskGroups,
     setLastInputContext,
     setPendingCategorizations,
+    setPendingTaskUpdate,
+    setPendingTaskSearch,
   } = useAppStore()
 
   const {
@@ -54,6 +56,7 @@ export default function InputArea() {
     prepareMessagesForAPI,
     clearCache,
     getStats,
+    summaryCount,
   } = useConversationSummary()
 
   // 當 session 切換時，清除摘要快取
@@ -403,8 +406,34 @@ export default function InputArea() {
                     categorizations: categorizationItems,
                     suggested_projects: parsed.suggested_projects || [],
                   })
+                } else if (parsed.type === 'task_search' && parsed.matched_tasks && parsed.matched_tasks.length > 0) {
+                  // 處理任務搜尋結果 - 讓用戶選擇要更新哪個任務
+                  console.log('[InputArea] 收到任務搜尋結果:', parsed.matched_tasks.length, '個匹配')
+
+                  // 設定待確認搜尋（讓用戶選擇）
+                  setPendingTaskSearch({
+                    id: crypto.randomUUID(),
+                    timestamp: new Date(),
+                    search_query: parsed.search_query || userMessage,
+                    matched_tasks: parsed.matched_tasks as TaskSearchResult[],
+                    intended_updates: parsed.intended_updates || {},
+                    update_reason: parsed.update_reason || '根據您的要求更新任務',
+                  })
+                } else if (parsed.type === 'task_update' && parsed.task_id && parsed.updates) {
+                  // 處理任務更新請求（舊版流程，保留向下相容）
+                  console.log('[InputArea] 收到任務更新請求:', parsed.task_id, parsed.task_title)
+
+                  // 設定待確認更新
+                  setPendingTaskUpdate({
+                    id: crypto.randomUUID(),
+                    timestamp: new Date(),
+                    task_id: parsed.task_id,
+                    task_title: parsed.task_title || '未知任務',
+                    updates: parsed.updates,
+                    reason: parsed.reason || '根據您的要求更新任務',
+                  })
                 } else {
-                  console.log('[InputArea] 不是 tasks_extracted 或 task_categorization 類型')
+                  console.log('[InputArea] 不是 tasks_extracted、task_categorization 或 task_update 類型')
                 }
 
                 // 記錄 API 使用量
@@ -598,15 +627,30 @@ export default function InputArea() {
             <span className="hidden md:inline">Enter 換行，⌘/Ctrl + Enter 送出</span>
             <span className="md:hidden">⌘/Ctrl + Enter 送出</span>
           </p>
-          {/* 記憶體使用量指示（超過 70% 時顯示） */}
-          {stats.percentageUsed > 70 && (
-            <p className="text-xs text-muted-foreground flex items-center gap-1">
-              <Brain className="h-3 w-3" />
-              <span className={stats.percentageUsed > 90 ? 'text-orange-500' : ''}>
-                記憶 {stats.percentageUsed}%
+          {/* 記憶使用量顯示 */}
+          <p className="text-xs text-muted-foreground flex items-center gap-1">
+            {summaryCount > 0 && (
+              <span className="text-blue-500 mr-1">
+                已整理 {summaryCount} 次
               </span>
-            </p>
-          )}
+            )}
+            <span className={
+              stats.percentageUsed >= 100
+                ? 'text-red-500 font-medium'
+                : stats.percentageUsed > 90
+                  ? 'text-orange-500'
+                  : stats.percentageUsed > 70
+                    ? 'text-yellow-600'
+                    : ''
+            }>
+              {isSummarizing
+                ? '🧠 整理記憶中...'
+                : stats.percentageUsed >= 100
+                  ? '🧠 下次發送將自動整理記憶'
+                  : `◐ ${stats.percentageUsed}% used`
+              }
+            </span>
+          </p>
         </div>
       </div>
     </div>

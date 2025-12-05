@@ -123,6 +123,9 @@ export default function ChatWindow() {
   // 使用 Supabase 任務 API（同步到雲端）
   const { addTask: addTaskToSupabase, updateTask: updateTaskInSupabase, tasks: supabaseTasks } = useSupabaseTasks()
 
+  // 新增訊息到對話
+  const addMessage = useAppStore((state: AppState) => state.addMessage)
+
   // 專案相關
   const { projects, addProject, refresh: refreshProjects } = useSupabaseProjects()
 
@@ -130,6 +133,15 @@ export default function ChatWindow() {
   const pendingCategorizations = useAppStore((state: AppState) => state.pendingCategorizations)
   const updateCategorizationSelection = useAppStore((state: AppState) => state.updateCategorizationSelection)
   const clearPendingCategorizations = useAppStore((state: AppState) => state.clearPendingCategorizations)
+
+  // 待確認任務更新
+  const pendingTaskUpdate = useAppStore((state: AppState) => state.pendingTaskUpdate)
+  const clearPendingTaskUpdate = useAppStore((state: AppState) => state.clearPendingTaskUpdate)
+
+  // 待確認任務搜尋（讓用戶選擇要更新哪個任務）
+  const pendingTaskSearch = useAppStore((state: AppState) => state.pendingTaskSearch)
+  const selectTaskForUpdate = useAppStore((state: AppState) => state.selectTaskForUpdate)
+  const clearPendingTaskSearch = useAppStore((state: AppState) => state.clearPendingTaskSearch)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -624,6 +636,130 @@ ${group.sourceContext}
     })
   }
 
+  // 確認套用任務更新
+  const handleConfirmTaskUpdate = async () => {
+    if (!pendingTaskUpdate || isSubmitting) return
+    setIsSubmitting(true)
+
+    try {
+      // 準備更新資料
+      const updateData: Record<string, unknown> = {}
+
+      if (pendingTaskUpdate.updates.description) {
+        updateData.description = pendingTaskUpdate.updates.description
+      }
+      if (pendingTaskUpdate.updates.title) {
+        updateData.title = pendingTaskUpdate.updates.title
+      }
+      if (pendingTaskUpdate.updates.priority) {
+        updateData.priority = pendingTaskUpdate.updates.priority
+      }
+      if (pendingTaskUpdate.updates.due_date) {
+        updateData.dueDate = new Date(pendingTaskUpdate.updates.due_date)
+      }
+      if (pendingTaskUpdate.updates.assignee) {
+        updateData.assignee = pendingTaskUpdate.updates.assignee
+      }
+
+      // 呼叫 Supabase 更新任務
+      await updateTaskInSupabase(pendingTaskUpdate.task_id, updateData)
+      console.log('[ChatWindow] 任務更新成功:', pendingTaskUpdate.task_id)
+
+      clearPendingTaskUpdate()
+    } catch (err) {
+      console.error('任務更新失敗:', err)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  // 用戶選擇任務（進入確認階段）
+  const handleSelectTaskToUpdate = (taskId: string, taskTitle: string) => {
+    if (!pendingTaskSearch) return
+    selectTaskForUpdate(taskId, taskTitle)
+  }
+
+  // 確認更新已選擇的任務
+  const handleConfirmSelectedTaskUpdate = async () => {
+    if (!pendingTaskSearch || !pendingTaskSearch.selectedTaskId || isSubmitting) return
+    setIsSubmitting(true)
+
+    const taskId = pendingTaskSearch.selectedTaskId
+    const taskTitle = pendingTaskSearch.selectedTaskTitle || '未知任務'
+
+    try {
+      // 準備更新資料
+      const updateData: Record<string, unknown> = {}
+      const updates = pendingTaskSearch.intended_updates
+
+      console.log('[ChatWindow] intended_updates:', updates)
+
+      if (updates.description) {
+        updateData.description = updates.description
+      }
+      if (updates.title) {
+        updateData.title = updates.title
+      }
+      if (updates.priority) {
+        updateData.priority = updates.priority
+      }
+      if (updates.due_date) {
+        updateData.dueDate = new Date(updates.due_date)
+      }
+      if (updates.assignee) {
+        updateData.assignee = updates.assignee
+      }
+
+      console.log('[ChatWindow] 準備更新資料:', updateData)
+
+      // 檢查是否有任何更新內容
+      if (Object.keys(updateData).length === 0) {
+        console.warn('[ChatWindow] 沒有更新內容！intended_updates 可能是空的')
+        addMessage({
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: '⚠️ AI 沒有提供更新內容，請重新描述你想要的修改。',
+          timestamp: new Date(),
+        })
+        clearPendingTaskSearch()
+        return
+      }
+
+      // 呼叫 Supabase 更新任務
+      await updateTaskInSupabase(taskId, updateData)
+      console.log('[ChatWindow] 任務更新成功:', taskId, taskTitle)
+
+      // 顯示成功訊息
+      addMessage({
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: `✅ 已更新任務「${taskTitle}」`,
+        timestamp: new Date(),
+      })
+
+      clearPendingTaskSearch()
+    } catch (err) {
+      console.error('任務更新失敗:', err)
+      // 顯示錯誤訊息
+      addMessage({
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: `❌ 更新任務「${taskTitle}」時發生錯誤，請稍後再試。`,
+        timestamp: new Date(),
+      })
+      clearPendingTaskSearch()
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  // 返回任務選擇（取消選擇）
+  const handleBackToTaskSelection = () => {
+    if (!pendingTaskSearch) return
+    // 清除選擇狀態，回到任務列表
+    selectTaskForUpdate('', '')
+  }
+
   return (
     <div
       ref={containerRef}
@@ -1094,6 +1230,260 @@ ${group.sourceContext}
                         <Check className="h-4 w-4 mr-1" />
                       )}
                       套用分類 ({pendingCategorizations.categorizations.filter(item => item.selected).length})
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            {/* 待確認任務更新 */}
+            {pendingTaskUpdate && (
+              <div className="py-4 px-4">
+                <Card className="p-4 border-2 border-blue-500/50 bg-blue-50/30 dark:bg-blue-950/20 max-w-3xl mx-auto">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span>✏️</span>
+                    <h3 className="font-medium">確認任務更新</h3>
+                  </div>
+
+                  {/* 任務資訊 */}
+                  <div className="mb-4 p-3 rounded-lg bg-white dark:bg-gray-900 border">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge variant="outline" className="text-xs">
+                        ID: {pendingTaskUpdate.task_id.slice(0, 8)}...
+                      </Badge>
+                      <span className="font-medium text-sm">{pendingTaskUpdate.task_title}</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground">{pendingTaskUpdate.reason}</p>
+                  </div>
+
+                  {/* 更新內容預覽 */}
+                  <div className="space-y-3 mb-4">
+                    {pendingTaskUpdate.updates.title && (
+                      <div className="p-3 rounded-lg bg-blue-100/50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800">
+                        <div className="text-xs text-blue-600 dark:text-blue-400 mb-1">新標題</div>
+                        <p className="text-sm">{pendingTaskUpdate.updates.title}</p>
+                      </div>
+                    )}
+                    {pendingTaskUpdate.updates.description && (
+                      <div className="p-3 rounded-lg bg-blue-100/50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800">
+                        <div className="text-xs text-blue-600 dark:text-blue-400 mb-1">更新後的描述</div>
+                        <p className="text-sm whitespace-pre-wrap max-h-[200px] overflow-y-auto">
+                          {pendingTaskUpdate.updates.description}
+                        </p>
+                      </div>
+                    )}
+                    {pendingTaskUpdate.updates.priority && (
+                      <div className="p-3 rounded-lg bg-blue-100/50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800">
+                        <div className="text-xs text-blue-600 dark:text-blue-400 mb-1">優先級</div>
+                        <Badge variant={
+                          pendingTaskUpdate.updates.priority === 'urgent' ? 'destructive' :
+                          pendingTaskUpdate.updates.priority === 'high' ? 'default' : 'secondary'
+                        }>
+                          {pendingTaskUpdate.updates.priority}
+                        </Badge>
+                      </div>
+                    )}
+                    {pendingTaskUpdate.updates.due_date && (
+                      <div className="p-3 rounded-lg bg-blue-100/50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800">
+                        <div className="text-xs text-blue-600 dark:text-blue-400 mb-1">截止日期</div>
+                        <p className="text-sm">{pendingTaskUpdate.updates.due_date}</p>
+                      </div>
+                    )}
+                    {pendingTaskUpdate.updates.assignee && (
+                      <div className="p-3 rounded-lg bg-blue-100/50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800">
+                        <div className="text-xs text-blue-600 dark:text-blue-400 mb-1">負責人</div>
+                        <p className="text-sm">{pendingTaskUpdate.updates.assignee}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2 pt-3 border-t">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={clearPendingTaskUpdate}
+                      disabled={isSubmitting}
+                      className="flex-1"
+                    >
+                      <X className="h-4 w-4 mr-1" />
+                      取消
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleConfirmTaskUpdate}
+                      disabled={isSubmitting}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700"
+                    >
+                      {isSubmitting ? (
+                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                      ) : (
+                        <Check className="h-4 w-4 mr-1" />
+                      )}
+                      確認更新
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            {/* 待確認任務搜尋（讓用戶選擇要更新哪個任務） */}
+            {pendingTaskSearch && pendingTaskSearch.matched_tasks.length > 0 && !pendingTaskSearch.selectedTaskId && (
+              <div className="py-4 px-4">
+                <Card className="p-4 border-2 border-amber-500/50 bg-amber-50/30 dark:bg-amber-950/20 max-w-3xl mx-auto">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span>🔍</span>
+                    <h3 className="font-medium">選擇要更新的任務</h3>
+                    <Badge variant="secondary" className="text-xs">
+                      找到 {pendingTaskSearch.matched_tasks.length} 個
+                    </Badge>
+                  </div>
+
+                  {/* 更新內容說明 */}
+                  <div className="mb-4 p-3 rounded-lg bg-white dark:bg-gray-900 border text-sm">
+                    <div className="text-muted-foreground mb-1">將套用以下更新：</div>
+                    <div className="text-foreground">{pendingTaskSearch.update_reason}</div>
+                  </div>
+
+                  {/* 匹配的任務列表 */}
+                  <div className="space-y-2 mb-4">
+                    {pendingTaskSearch.matched_tasks.map((task) => (
+                      <button
+                        key={task.task_id}
+                        onClick={() => handleSelectTaskToUpdate(task.task_id, task.task_title)}
+                        disabled={isSubmitting}
+                        className="w-full text-left p-3 rounded-lg border bg-background hover:bg-amber-100/50 dark:hover:bg-amber-900/30 transition-colors disabled:opacity-50"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-sm">{task.task_title}</p>
+                            <div className="flex flex-wrap gap-2 mt-1.5">
+                              {task.task_project && (
+                                <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
+                                  📁 {task.task_project}
+                                </Badge>
+                              )}
+                              {task.task_assignee && (
+                                <Badge variant="outline" className="text-xs">
+                                  👤 {task.task_assignee}
+                                </Badge>
+                              )}
+                              {task.task_due_date && (
+                                <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
+                                  <Clock className="h-2.5 w-2.5 mr-1" />
+                                  {task.task_due_date}
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1.5">{task.match_reason}</p>
+                          </div>
+                          <div className="shrink-0">
+                            <Check className="h-4 w-4 text-amber-600" />
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2 pt-3 border-t">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={clearPendingTaskSearch}
+                      disabled={isSubmitting}
+                      className="flex-1"
+                    >
+                      <X className="h-4 w-4 mr-1" />
+                      取消
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            {/* 已選擇任務，顯示更新內容預覽 */}
+            {pendingTaskSearch && pendingTaskSearch.selectedTaskId && (
+              <div className="py-4 px-4">
+                <Card className="p-4 border-2 border-green-500/50 bg-green-50/30 dark:bg-green-950/20 max-w-3xl mx-auto">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span>✏️</span>
+                    <h3 className="font-medium">確認更新內容</h3>
+                  </div>
+
+                  {/* 選擇的任務資訊 */}
+                  <div className="mb-4 p-3 rounded-lg bg-white dark:bg-gray-900 border">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge variant="outline" className="text-xs bg-green-100 text-green-700 border-green-300">
+                        已選擇
+                      </Badge>
+                      <span className="font-medium text-sm">{pendingTaskSearch.selectedTaskTitle}</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground">{pendingTaskSearch.update_reason}</p>
+                  </div>
+
+                  {/* 更新內容預覽 */}
+                  <div className="space-y-3 mb-4">
+                    {pendingTaskSearch.intended_updates.title && (
+                      <div className="p-3 rounded-lg bg-green-100/50 dark:bg-green-900/30 border border-green-200 dark:border-green-800">
+                        <div className="text-xs text-green-600 dark:text-green-400 mb-1">新標題</div>
+                        <p className="text-sm">{pendingTaskSearch.intended_updates.title}</p>
+                      </div>
+                    )}
+                    {pendingTaskSearch.intended_updates.description && (
+                      <div className="p-3 rounded-lg bg-green-100/50 dark:bg-green-900/30 border border-green-200 dark:border-green-800">
+                        <div className="text-xs text-green-600 dark:text-green-400 mb-1">更新後的描述</div>
+                        <p className="text-sm whitespace-pre-wrap max-h-[300px] overflow-y-auto">
+                          {pendingTaskSearch.intended_updates.description}
+                        </p>
+                      </div>
+                    )}
+                    {pendingTaskSearch.intended_updates.priority && (
+                      <div className="p-3 rounded-lg bg-green-100/50 dark:bg-green-900/30 border border-green-200 dark:border-green-800">
+                        <div className="text-xs text-green-600 dark:text-green-400 mb-1">優先級</div>
+                        <Badge variant={
+                          pendingTaskSearch.intended_updates.priority === 'urgent' ? 'destructive' :
+                          pendingTaskSearch.intended_updates.priority === 'high' ? 'default' : 'secondary'
+                        }>
+                          {pendingTaskSearch.intended_updates.priority}
+                        </Badge>
+                      </div>
+                    )}
+                    {pendingTaskSearch.intended_updates.due_date && (
+                      <div className="p-3 rounded-lg bg-green-100/50 dark:bg-green-900/30 border border-green-200 dark:border-green-800">
+                        <div className="text-xs text-green-600 dark:text-green-400 mb-1">截止日期</div>
+                        <p className="text-sm">{pendingTaskSearch.intended_updates.due_date}</p>
+                      </div>
+                    )}
+                    {pendingTaskSearch.intended_updates.assignee && (
+                      <div className="p-3 rounded-lg bg-green-100/50 dark:bg-green-900/30 border border-green-200 dark:border-green-800">
+                        <div className="text-xs text-green-600 dark:text-green-400 mb-1">負責人</div>
+                        <p className="text-sm">{pendingTaskSearch.intended_updates.assignee}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2 pt-3 border-t">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleBackToTaskSelection}
+                      disabled={isSubmitting}
+                      className="flex-1"
+                    >
+                      <X className="h-4 w-4 mr-1" />
+                      重新選擇
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleConfirmSelectedTaskUpdate}
+                      disabled={isSubmitting}
+                      className="flex-1 bg-green-600 hover:bg-green-700"
+                    >
+                      {isSubmitting ? (
+                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                      ) : (
+                        <Check className="h-4 w-4 mr-1" />
+                      )}
+                      確認更新
                     </Button>
                   </div>
                 </Card>
