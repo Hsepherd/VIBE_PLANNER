@@ -7,7 +7,7 @@ import { projectsApi, tasksApi, conversationsApi, apiUsageApi } from '@/lib/supa
 
 // 自動同步元件：登入後自動從 Supabase 下載資料
 export function AutoSync() {
-  const { user, loading } = useAuth()
+  const { user, isLoading: loading } = useAuth()
   const hasSynced = useRef(false)
 
   useEffect(() => {
@@ -48,7 +48,7 @@ export function AutoSync() {
             startDate: t.start_date ? new Date(t.start_date) : undefined,
             assignee: t.assignee || undefined,
             projectId: t.project_id || undefined,
-            group: t.group || undefined,
+            group: t.group_name || undefined,
             tags: t.tags || [],
             recurrenceType: t.recurrence_type || 'none',
             recurrenceConfig: t.recurrence_config || undefined,

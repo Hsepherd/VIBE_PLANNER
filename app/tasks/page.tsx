@@ -105,11 +105,19 @@ type SecondarySort = {
 }
 
 // 優先級設定
-const priorityConfig = {
-  urgent: { label: '緊急', emoji: '🔴', color: 'destructive' as const },
-  high: { label: '高', emoji: '🟠', color: 'default' as const },
-  medium: { label: '中', emoji: '🟡', color: 'secondary' as const },
-  low: { label: '低', emoji: '🟢', color: 'outline' as const },
+type PriorityConfig = {
+  [key in 'urgent' | 'high' | 'medium' | 'low']: {
+    label: string
+    emoji: string
+    color: 'destructive' | 'default' | 'secondary' | 'outline'
+  }
+}
+
+const priorityConfig: PriorityConfig = {
+  urgent: { label: '緊急', emoji: '🔴', color: 'destructive' },
+  high: { label: '高', emoji: '🟠', color: 'default' },
+  medium: { label: '中', emoji: '🟡', color: 'secondary' },
+  low: { label: '低', emoji: '🟢', color: 'outline' },
 }
 
 // 解析 description 的各個區塊
@@ -1592,8 +1600,8 @@ export default function TasksPage() {
         status: 'in_progress',
         priority: data.priority,
         assignee: data.assignee,
-        startDate: data.startDate?.toISOString(),
-        dueDate: data.dueDate?.toISOString(),
+        startDate: data.startDate,
+        dueDate: data.dueDate,
       }
 
       // 根據目前的分類模式設定預設值（如果用戶沒有手動選擇）
@@ -1618,12 +1626,12 @@ export default function TasksPage() {
         // 根據日期分組設定截止日（如果用戶沒有手動選擇）
         if (!data.dueDate) {
           if (groupKey === 'today') {
-            taskData.dueDate = new Date().toISOString()
+            taskData.dueDate = new Date()
           } else if (groupKey === 'tomorrow') {
-            taskData.dueDate = addDays(new Date(), 1).toISOString()
+            taskData.dueDate = addDays(new Date(), 1)
           } else if (groupKey.startsWith('date_')) {
             const dateStr = groupKey.replace('date_', '')
-            taskData.dueDate = new Date(dateStr).toISOString()
+            taskData.dueDate = new Date(dateStr)
           }
         }
       }
@@ -2357,7 +2365,7 @@ export default function TasksPage() {
   }: {
     groupKey: string
     teamMembers: string[]
-    priorityConfig: typeof priorityConfig
+    priorityConfig: PriorityConfig
     columnWidths: { assignee: number; startDate: number; dueDate: number; priority: number }
     onSubmit: (data: { title: string; assignee?: string; startDate?: Date; dueDate?: Date; priority: Task['priority'] }) => void
     onCancel: () => void
@@ -2500,7 +2508,7 @@ export default function TasksPage() {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-28">
-              {(Object.keys(priorityConfig) as Array<keyof typeof priorityConfig>).map((key) => (
+              {(Object.keys(priorityConfig) as Array<Task['priority']>).map((key) => (
                 <DropdownMenuItem key={key} onClick={() => setPriority(key)} className="text-xs">
                   <span className="mr-2">{priorityConfig[key].emoji}</span>{priorityConfig[key].label}
                   {priority === key && <Check className="h-3 w-3 ml-auto" />}

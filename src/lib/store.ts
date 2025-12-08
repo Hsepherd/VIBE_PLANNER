@@ -20,6 +20,7 @@ export interface Task {
   description?: string
   status: 'pending' | 'in_progress' | 'completed' | 'on_hold'
   priority: 'low' | 'medium' | 'high' | 'urgent'
+  startDate?: Date
   dueDate?: Date
   assignee?: string
   projectId?: string
