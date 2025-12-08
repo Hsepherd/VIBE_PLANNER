@@ -369,10 +369,21 @@ export default function CalendarPage() {
     const weekStart = startOfDay(weekDays[0])
     const weekEnd = startOfDay(weekDays[6])
 
-    // 計算任務在這週的顯示資訊
+    // 判斷任務是否有特定時間（非全天）
+    const hasSpecificTime = (task: Task) => {
+      const taskStart = task.startDate ? new Date(task.startDate) : null
+      const taskEnd = task.dueDate ? new Date(task.dueDate) : null
+      return (taskStart && (taskStart.getHours() !== 0 || taskStart.getMinutes() !== 0)) ||
+             (taskEnd && (taskEnd.getHours() !== 0 || taskEnd.getMinutes() !== 0))
+    }
+
+    // 計算任務在這週的顯示資訊（只顯示全天任務，有時間的在時間格顯示）
     const getTaskBarsForWeek = () => {
-      // 找出所有與這週有交集的任務
+      // 找出所有與這週有交集的「全天」任務
       const relevantTasks = tasks.filter((task: Task) => {
+        // 排除有特定時間的任務（這些會在時間格裡顯示）
+        if (hasSpecificTime(task)) return false
+
         const taskStart = task.startDate ? startOfDay(new Date(task.startDate)) : null
         const taskEnd = task.dueDate ? startOfDay(new Date(task.dueDate)) : null
 
@@ -509,7 +520,7 @@ export default function CalendarPage() {
           </div>
         </div>
 
-        {/* 下方：時間軸（簡化版，不顯示時間格） */}
+        {/* 下方：時間軸 + 有時間的任務 */}
         <div className="flex-1 overflow-y-auto">
           <div className="flex">
             <div className="w-14 shrink-0 border-r border-gray-200/50">
@@ -525,11 +536,104 @@ export default function CalendarPage() {
             <div className="flex-1 grid grid-cols-7">
               {weekDays.map((day, dayIdx) => {
                 const isTodayDate = isToday(day)
+
+                // 取得這天有時間的任務（開始時間不是 00:00）
+                const timedTasks = tasks.filter((task: Task) => {
+                  // 檢查任務是否在這天
+                  const taskStart = task.startDate ? new Date(task.startDate) : null
+                  const taskEnd = task.dueDate ? new Date(task.dueDate) : null
+
+                  // 需要有時間（不是午夜）
+                  const hasTime = (taskStart && (taskStart.getHours() !== 0 || taskStart.getMinutes() !== 0)) ||
+                                 (taskEnd && (taskEnd.getHours() !== 0 || taskEnd.getMinutes() !== 0))
+
+                  if (!hasTime) return false
+
+                  // 檢查是否在這天
+                  if (taskStart && isSameDay(taskStart, day)) return true
+                  if (taskEnd && isSameDay(taskEnd, day)) return true
+
+                  return false
+                })
+
                 return (
                   <div key={dayIdx} className="border-r border-gray-200/30 last:border-r-0 relative">
                     {hours.map((hour) => (
                       <div key={hour} className="h-14 border-b border-gray-100/50" />
                     ))}
+
+                    {/* 有時間的任務 */}
+                    {timedTasks.map((task) => {
+                      // 決定使用哪個時間來定位
+                      const taskStart = task.startDate ? new Date(task.startDate) : null
+                      const taskEnd = task.dueDate ? new Date(task.dueDate) : null
+
+                      // 優先使用開始時間，否則用截止時間
+                      let displayTime: Date
+                      let endTime: Date | null = null
+
+                      if (taskStart && isSameDay(taskStart, day) && (taskStart.getHours() !== 0 || taskStart.getMinutes() !== 0)) {
+                        displayTime = taskStart
+                        // 如果同一天有截止時間，用它來計算長度
+                        if (taskEnd && isSameDay(taskEnd, day) && (taskEnd.getHours() !== 0 || taskEnd.getMinutes() !== 0)) {
+                          endTime = taskEnd
+                        }
+                      } else if (taskEnd && isSameDay(taskEnd, day)) {
+                        displayTime = taskEnd
+                      } else {
+                        return null
+                      }
+
+                      const startHour = displayTime.getHours()
+                      const startMinute = displayTime.getMinutes()
+
+                      // 計算位置（從 6:00 開始，每小時 56px）
+                      const topOffset = (startHour - 6) * 56 + (startMinute / 60) * 56
+
+                      // 計算高度（如果有結束時間）
+                      let height = 50 // 預設高度
+                      if (endTime) {
+                        const durationMinutes = differenceInMinutes(endTime, displayTime)
+                        height = Math.max(24, (durationMinutes / 60) * 56 - 4)
+                      }
+
+                      // 如果時間在 6:00 之前，不顯示
+                      if (startHour < 6) return null
+
+                      const colors = getTaskBarStyle(task)
+
+                      return (
+                        <div
+                          key={task.id}
+                          className={`
+                            absolute left-1 right-1 rounded-md px-1.5 py-1 text-xs cursor-pointer
+                            hover:brightness-95 transition-all overflow-hidden
+                            ${colors.bg} ${colors.text}
+                            ${task.status === 'completed' ? 'opacity-50' : ''}
+                          `}
+                          style={{
+                            top: `${topOffset}px`,
+                            height: `${height}px`,
+                            zIndex: 5,
+                          }}
+                          onClick={() => setSelectedTask(task)}
+                          title={`${task.title} - ${format(displayTime, 'HH:mm')}${endTime ? ` ~ ${format(endTime, 'HH:mm')}` : ''}`}
+                        >
+                          <div className="flex items-start gap-1">
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-0.5 ${colors.dot}`} />
+                            <div className="flex-1 min-w-0">
+                              <p className={`font-medium truncate leading-tight ${task.status === 'completed' ? 'line-through' : ''}`}>
+                                {task.title}
+                              </p>
+                              <p className="text-[10px] opacity-75">
+                                {format(displayTime, 'HH:mm')}{endTime ? ` - ${format(endTime, 'HH:mm')}` : ''}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+
                     {/* 當前時間線 */}
                     {isTodayDate && (
                       <div
