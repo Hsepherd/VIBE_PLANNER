@@ -53,6 +53,7 @@ export default function CalendarPage() {
   // 取得某天的任務（支援日期區間）
   const getTasksForDate = (date: Date) => {
     const targetDate = startOfDay(date)
+    const today = startOfDay(new Date())
 
     return tasks.filter((task: Task) => {
       // 如果有開始日期和截止日期，檢查目標日期是否在區間內
@@ -62,14 +63,22 @@ export default function CalendarPage() {
         return targetDate >= start && targetDate <= end
       }
 
-      // 只有開始日期：僅在開始日期當天顯示
+      // 只有開始日期：從開始日期當天及之後顯示（但不超過 7 天後）
       if (task.startDate) {
-        return isSameDay(new Date(task.startDate), date)
+        const start = startOfDay(new Date(task.startDate))
+        const maxEnd = addDays(start, 7)
+        return targetDate >= start && targetDate <= maxEnd
       }
 
-      // 只有截止日期：僅在截止日期當天顯示
+      // 只有截止日期：從今天到截止日都顯示（讓用戶提前看到即將到期的任務）
       if (task.dueDate) {
-        return isSameDay(new Date(task.dueDate), date)
+        const end = startOfDay(new Date(task.dueDate))
+        // 如果截止日在今天之前，只在截止日當天顯示
+        if (end < today) {
+          return isSameDay(end, targetDate)
+        }
+        // 截止日在今天或之後，從今天到截止日都顯示
+        return targetDate >= today && targetDate <= end
       }
 
       return false

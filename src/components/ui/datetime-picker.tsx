@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { zhTW } from 'date-fns/locale'
 import { format, setHours, setMinutes } from 'date-fns'
+import { Check, X } from 'lucide-react'
 
 interface DateTimePickerProps {
   value?: Date
@@ -15,33 +16,35 @@ interface DateTimePickerProps {
 }
 
 export function DateTimePicker({ value, onChange, onClose, showClear = true }: DateTimePickerProps) {
+  // 內部暫存狀態，只有確認後才送出
   const [selectedDate, setSelectedDate] = React.useState<Date | undefined>(value)
   const [timeValue, setTimeValue] = React.useState(
     value ? format(value, 'HH:mm') : ''
   )
 
-  // 當 value 改變時更新內部狀態
+  // 當 value 從外部改變時更新內部狀態
   React.useEffect(() => {
     setSelectedDate(value)
     setTimeValue(value ? format(value, 'HH:mm') : '')
   }, [value])
 
+  // 選擇日期（只更新內部狀態，不送出）
   const handleDateSelect = (date: Date | undefined) => {
     if (!date) {
       setSelectedDate(undefined)
       return
     }
 
-    // 保留時間
+    // 保留已選的時間
     let newDate = date
     if (timeValue) {
       const [hours, minutes] = timeValue.split(':').map(Number)
       newDate = setMinutes(setHours(date, hours || 0), minutes || 0)
     }
     setSelectedDate(newDate)
-    onChange(newDate)
   }
 
+  // 修改時間（只更新內部狀態，不送出）
   const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = e.target.value
     setTimeValue(time)
@@ -50,14 +53,27 @@ export function DateTimePicker({ value, onChange, onClose, showClear = true }: D
       const [hours, minutes] = time.split(':').map(Number)
       const newDate = setMinutes(setHours(selectedDate, hours || 0), minutes || 0)
       setSelectedDate(newDate)
-      onChange(newDate)
     }
   }
 
+  // 確認按鈕：送出選擇的日期時間
+  const handleConfirm = () => {
+    onChange(selectedDate)
+    onClose?.()
+  }
+
+  // 清除按鈕
   const handleClear = () => {
     setSelectedDate(undefined)
     setTimeValue('')
     onChange(undefined)
+    onClose?.()
+  }
+
+  // 取消按鈕：恢復原本的值並關閉
+  const handleCancel = () => {
+    setSelectedDate(value)
+    setTimeValue(value ? format(value, 'HH:mm') : '')
     onClose?.()
   }
 
@@ -69,7 +85,8 @@ export function DateTimePicker({ value, onChange, onClose, showClear = true }: D
         onSelect={handleDateSelect}
         locale={zhTW}
       />
-      <div className="p-3 border-t space-y-2">
+      <div className="p-3 border-t space-y-3">
+        {/* 時間輸入 */}
         <div className="flex items-center gap-2">
           <label className="text-xs text-gray-500 shrink-0">時間</label>
           <Input
@@ -79,14 +96,37 @@ export function DateTimePicker({ value, onChange, onClose, showClear = true }: D
             className="h-8 text-sm"
           />
         </div>
-        {showClear && selectedDate && (
+
+        {/* 操作按鈕 */}
+        <div className="flex gap-2">
+          <Button
+            variant="default"
+            size="sm"
+            className="flex-1 h-8"
+            onClick={handleConfirm}
+          >
+            <Check className="h-4 w-4 mr-1" />
+            確認
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8"
+            onClick={handleCancel}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {/* 清除按鈕 */}
+        {showClear && value && (
           <Button
             variant="ghost"
             size="sm"
-            className="w-full text-xs text-gray-500 hover:text-red-500"
+            className="w-full text-xs text-gray-500 hover:text-red-500 h-7"
             onClick={handleClear}
           >
-            清除
+            清除日期
           </Button>
         )}
       </div>
