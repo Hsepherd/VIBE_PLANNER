@@ -114,6 +114,27 @@ export function useSupabaseTasks() {
   // 更新任務
   const updateTask = useCallback(async (id: string, updates: Partial<Task>) => {
     try {
+      // 日期驗證：開始日不能晚於截止日
+      const task = tasks.find(t => t.id === id)
+      if (task) {
+        const newStartDate = 'startDate' in updates ? updates.startDate : task.startDate
+        const newDueDate = 'dueDate' in updates ? updates.dueDate : task.dueDate
+
+        if (newStartDate && newDueDate) {
+          const startTime = new Date(newStartDate).getTime()
+          const dueTime = new Date(newDueDate).getTime()
+
+          // 如果更新開始日，且開始日晚於截止日，自動調整截止日
+          if ('startDate' in updates && startTime > dueTime) {
+            updates.dueDate = updates.startDate
+          }
+          // 如果更新截止日，且截止日早於開始日，自動調整開始日
+          if ('dueDate' in updates && dueTime < startTime) {
+            updates.startDate = updates.dueDate
+          }
+        }
+      }
+
       const dbUpdates: Partial<DbTask> = {}
       // 使用 'key' in object 來檢測是否有傳入該欄位（即使值是 undefined）
       if ('title' in updates) dbUpdates.title = updates.title!

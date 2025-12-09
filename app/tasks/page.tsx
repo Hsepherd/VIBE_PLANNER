@@ -1646,9 +1646,30 @@ export default function TasksPage() {
 
   // 任務更新處理（支援復原）
   const handleUpdateTask = useCallback(async (id: string, updates: Partial<Task>, skipUndo = false) => {
+    const task = tasks.find(t => t.id === id)
+
+    // 日期驗證：開始日不能晚於截止日
+    if (task) {
+      const newStartDate = 'startDate' in updates ? updates.startDate : task.startDate
+      const newDueDate = 'dueDate' in updates ? updates.dueDate : task.dueDate
+
+      if (newStartDate && newDueDate) {
+        const startTime = new Date(newStartDate).getTime()
+        const dueTime = new Date(newDueDate).getTime()
+
+        // 如果更新開始日，且開始日晚於截止日，自動調整截止日
+        if ('startDate' in updates && startTime > dueTime) {
+          updates.dueDate = updates.startDate
+        }
+        // 如果更新截止日，且截止日早於開始日，自動調整開始日
+        if ('dueDate' in updates && dueTime < startTime) {
+          updates.startDate = updates.dueDate
+        }
+      }
+    }
+
     // 備份目前狀態（除非明確跳過）
     if (!skipUndo) {
-      const task = tasks.find(t => t.id === id)
       if (task) {
         // 只備份被更新的欄位
         const previousState: Partial<Task> = {}
