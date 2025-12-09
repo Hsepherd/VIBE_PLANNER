@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useSupabaseTasks, type Task } from '@/lib/useSupabaseTasks'
+import { useSwipeable } from 'react-swipeable'
 import {
   format,
   startOfMonth,
@@ -23,12 +24,14 @@ import {
   isToday,
   getHours,
   setHours,
+  setMinutes,
   differenceInMinutes,
   differenceInDays,
   isBefore,
   isAfter,
   max,
   min,
+  addMinutes,
 } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
 import {
@@ -49,6 +52,43 @@ export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [viewMode, setViewMode] = useState<ViewMode>('week')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [expandedAllDay, setExpandedAllDay] = useState(false) // 全天區域是否展開
+
+  // 滑動切換日期狀態
+  const [swipeOffset, setSwipeOffset] = useState(0) // 滑動位移（用於視覺回饋）
+  const [isAnimating, setIsAnimating] = useState(false) // 是否正在動畫中
+
+  // 拖曳狀態
+  const [draggingTask, setDraggingTask] = useState<Task | null>(null)
+  const [dragMode, setDragMode] = useState<'move' | 'resize' | null>(null)
+  const [dragStartY, setDragStartY] = useState(0)
+  const [dragStartX, setDragStartX] = useState(0) // 追蹤 X 座標以支援跨天拖曳
+  const [dragStartTime, setDragStartTime] = useState<Date | null>(null)
+  const [dragEndTime, setDragEndTime] = useState<Date | null>(null)
+  const [hasDragged, setHasDragged] = useState(false) // 追蹤是否真的有拖曳
+  const [dragStartDayIndex, setDragStartDayIndex] = useState(0) // 開始拖曳時的天數索引
+  const timeGridRef = useRef<HTMLDivElement>(null)
+
+  // 鍵盤左右箭頭切換日期
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 如果正在輸入文字，不處理
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      // 如果有任務被選中（popup 開啟），不處理
+      if (selectedTask) return
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        setCurrentDate(prev => addDays(prev, -1))
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        setCurrentDate(prev => addDays(prev, 1))
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedTask])
 
   // 取得某天的任務（支援日期區間）
   const getTasksForDate = (date: Date) => {
@@ -230,6 +270,125 @@ export default function CalendarPage() {
     }
   }
 
+  // 將 Y 座標轉換為時間（每小時 56px，從 6:00 開始）
+  const yToTime = useCallback((y: number, baseDate: Date): Date => {
+    const totalMinutes = Math.round((y / 56) * 60) + 6 * 60 // 從 6:00 開始
+    const hours = Math.floor(totalMinutes / 60)
+    const minutes = Math.round((totalMinutes % 60) / 15) * 15 // 15 分鐘為單位
+    return setMinutes(setHours(baseDate, Math.min(23, Math.max(6, hours))), minutes)
+  }, [])
+
+  // 開始拖曳任務（移動或調整時長）
+  const handleDragStart = useCallback((e: React.MouseEvent, task: Task, mode: 'move' | 'resize', dayIndex: number = 0) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    // 確保有開始和結束時間才能操作
+    const startTime = task.startDate ? new Date(task.startDate) : null
+    const endTime = task.dueDate ? new Date(task.dueDate) : null
+
+    // resize 模式需要有開始時間（結束時間可以自動設定）
+    if (mode === 'resize' && !startTime) {
+      console.log('無法調整時長：需要設定開始時間')
+      return
+    }
+
+    // move 模式需要有開始時間
+    if (mode === 'move' && !startTime) {
+      console.log('無法移動：需要設定開始時間')
+      return
+    }
+
+    setDraggingTask(task)
+    setDragMode(mode)
+    setDragStartY(e.clientY)
+    setDragStartX(e.clientX)
+    setDragStartTime(startTime)
+    setDragEndTime(endTime)
+    setHasDragged(false) // 重置拖曳標記
+    setDragStartDayIndex(dayIndex)
+  }, [])
+
+  // 拖曳中
+  const handleDragMove = useCallback((e: React.MouseEvent) => {
+    if (!draggingTask || !dragMode || !timeGridRef.current) return
+
+    const deltaY = e.clientY - dragStartY
+    const deltaX = e.clientX - dragStartX
+    const deltaMinutes = Math.round((deltaY / 56) * 60 / 15) * 15 // 15 分鐘為單位
+
+    // 只有當移動超過閾值（8px）才算真正拖曳
+    if (Math.abs(deltaY) > 8 || Math.abs(deltaX) > 20) {
+      setHasDragged(true)
+    }
+
+    if (dragMode === 'move' && dragStartTime) {
+      // 計算跨天的天數差異
+      const gridRect = timeGridRef.current.getBoundingClientRect()
+      const columnWidth = (gridRect.width - 56) / 7 // 減去時間軸寬度，除以 7 天
+      const deltaDays = Math.round(deltaX / columnWidth)
+
+      // 移動：同時更新開始和結束時間（包含跨天）
+      let newStart = addMinutes(dragStartTime, deltaMinutes)
+      newStart = addDays(newStart, deltaDays)
+
+      let newEnd = dragEndTime ? addMinutes(dragEndTime, deltaMinutes) : null
+      if (newEnd) {
+        newEnd = addDays(newEnd, deltaDays)
+      }
+
+      // 限制在 6:00 - 23:00 之間
+      if (newStart.getHours() >= 6 && newStart.getHours() <= 23) {
+        setDraggingTask({
+          ...draggingTask,
+          startDate: newStart,
+          dueDate: newEnd || undefined,
+        })
+      }
+    } else if (dragMode === 'resize' && dragStartTime) {
+      // 調整時長：只更新結束時間
+      // 如果沒有結束時間，從開始時間 + 1 小時作為基準
+      const baseEndTime = dragEndTime || addMinutes(dragStartTime, 60)
+      const newEnd = addMinutes(baseEndTime, deltaMinutes)
+
+      // 確保結束時間在開始時間之後（至少 15 分鐘），且在 6:00 - 23:59 之間
+      const minEnd = addMinutes(dragStartTime, 15)
+      if (newEnd >= minEnd && newEnd.getHours() >= 6 && (newEnd.getHours() < 24)) {
+        setDraggingTask({
+          ...draggingTask,
+          dueDate: newEnd,
+        })
+      }
+    }
+  }, [draggingTask, dragMode, dragStartY, dragStartX, dragStartTime, dragEndTime])
+
+  // 結束拖曳
+  const handleDragEnd = useCallback(async () => {
+    if (draggingTask && dragMode) {
+      if (hasDragged) {
+        // 真的有拖曳，儲存更新
+        await updateSupabaseTask(draggingTask.id, {
+          startDate: draggingTask.startDate,
+          dueDate: draggingTask.dueDate,
+        })
+      } else {
+        // 只是點擊，打開 popup（找回原始任務資料）
+        const originalTask = tasks.find((t: Task) => t.id === draggingTask.id)
+        if (originalTask) {
+          setSelectedTask(originalTask)
+        }
+      }
+    }
+    setDraggingTask(null)
+    setDragMode(null)
+    setDragStartY(0)
+    setDragStartX(0)
+    setDragStartTime(null)
+    setDragEndTime(null)
+    setHasDragged(false)
+    setDragStartDayIndex(0)
+  }, [draggingTask, dragMode, hasDragged, tasks, updateSupabaseTask])
+
   // 格式化日期顯示
   const formatTaskDate = (date: Date) => {
     if (isToday(date)) return '今天'
@@ -364,25 +523,96 @@ export default function CalendarPage() {
     )
   }
 
+
+  // 週視圖滑動手勢
+  const swipeHandlers = useSwipeable({
+    onSwiping: (e) => {
+      // 只在水平滑動時處理，且沒有正在拖曳任務
+      if (draggingTask || isAnimating) return
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        // 提供即時的視覺回饋（限制最大位移）
+        const maxOffset = 150
+        setSwipeOffset(Math.max(-maxOffset, Math.min(maxOffset, e.deltaX)))
+      }
+    },
+    onSwipedLeft: (e) => {
+      // 向左滑 = 下一天（如果不是在拖曳任務）
+      if (draggingTask || isAnimating) return
+      if (Math.abs(e.deltaX) > 50) { // 閾值 50px
+        setIsAnimating(true)
+        setSwipeOffset(-150) // 動畫到邊緣
+        setTimeout(() => {
+          setCurrentDate(prev => addDays(prev, 1))
+          setSwipeOffset(0)
+          setIsAnimating(false)
+        }, 150)
+      } else {
+        // 回彈
+        setSwipeOffset(0)
+      }
+    },
+    onSwipedRight: (e) => {
+      // 向右滑 = 前一天
+      if (draggingTask || isAnimating) return
+      if (Math.abs(e.deltaX) > 50) {
+        setIsAnimating(true)
+        setSwipeOffset(150)
+        setTimeout(() => {
+          setCurrentDate(prev => addDays(prev, -1))
+          setSwipeOffset(0)
+          setIsAnimating(false)
+        }, 150)
+      } else {
+        setSwipeOffset(0)
+      }
+    },
+    onSwiped: () => {
+      // 滑動結束，如果沒觸發切換就回彈
+      if (!isAnimating) {
+        setSwipeOffset(0)
+      }
+    },
+    trackMouse: true, // 也支援滑鼠拖曳
+    preventScrollOnSwipe: true,
+    delta: 10, // 開始追蹤的最小距離
+  })
+
   // 週視圖 - 支援跨日任務橫條顯示
   const WeekView = () => {
     const weekStart = startOfDay(weekDays[0])
     const weekEnd = startOfDay(weekDays[6])
 
-    // 判斷任務是否有特定時間（非全天）
-    const hasSpecificTime = (task: Task) => {
+    // 判斷任務是否為「單日時間任務」（應顯示在時間格裡而非全天區）
+    const isSingleDayTimedTask = (task: Task) => {
       const taskStart = task.startDate ? new Date(task.startDate) : null
       const taskEnd = task.dueDate ? new Date(task.dueDate) : null
-      return (taskStart && (taskStart.getHours() !== 0 || taskStart.getMinutes() !== 0)) ||
-             (taskEnd && (taskEnd.getHours() !== 0 || taskEnd.getMinutes() !== 0))
+
+      // 情況 1: 開始和截止時間完全相同（時間點任務）- 即使是 00:00 也顯示在時間格
+      if (taskStart && taskEnd && taskStart.getTime() === taskEnd.getTime()) {
+        return true
+      }
+
+      // 情況 2: 有特定時間（不是 00:00）且同一天
+      const hasTime = (taskStart && (taskStart.getHours() !== 0 || taskStart.getMinutes() !== 0)) ||
+                     (taskEnd && (taskEnd.getHours() !== 0 || taskEnd.getMinutes() !== 0))
+
+      if (!hasTime) return false
+
+      // 如果有開始和結束時間，檢查是否同一天
+      if (taskStart && taskEnd) {
+        return isSameDay(taskStart, taskEnd)
+      }
+
+      // 只有一個時間點，算單日
+      return true
     }
 
-    // 計算任務在這週的顯示資訊（只顯示全天任務，有時間的在時間格顯示）
+    // 計算任務在這週的顯示資訊（全天任務 + 跨日任務都在這裡顯示）
     const getTaskBarsForWeek = () => {
-      // 找出所有與這週有交集的「全天」任務
+      // 找出所有與這週有交集的「全天或跨日」任務
       const relevantTasks = tasks.filter((task: Task) => {
-        // 排除有特定時間的任務（這些會在時間格裡顯示）
-        if (hasSpecificTime(task)) return false
+        // 排除單日時間任務（這些會在時間格裡顯示）
+        if (isSingleDayTimedTask(task)) return false
 
         const taskStart = task.startDate ? startOfDay(new Date(task.startDate)) : null
         const taskEnd = task.dueDate ? startOfDay(new Date(task.dueDate)) : null
@@ -431,7 +661,14 @@ export default function CalendarPage() {
     const taskBars = getTaskBarsForWeek()
 
     return (
-      <div className="flex flex-col flex-1 overflow-hidden">
+      <div
+        {...swipeHandlers}
+        className="flex flex-col flex-1 overflow-hidden relative"
+        style={{
+          transform: `translateX(${swipeOffset}px)`,
+          transition: isAnimating ? 'transform 150ms ease-out' : 'none',
+        }}
+      >
         {/* 頂部：日期標題 + 跨日任務橫條區 */}
         <div className="shrink-0 border-b">
           {/* 日期標題 */}
@@ -472,7 +709,7 @@ export default function CalendarPage() {
             </div>
             <div className="flex-1 relative min-h-[80px] py-1">
               <div className="space-y-0.5 px-1">
-                {taskBars.slice(0, 3).map(({ task, startCol, span }) => {
+                {(expandedAllDay ? taskBars : taskBars.slice(0, 3)).map(({ task, startCol, span }) => {
                   const colors = getTaskBarStyle(task)
                   return (
                     <div
@@ -504,9 +741,9 @@ export default function CalendarPage() {
                 {taskBars.length > 3 && (
                   <button
                     className="text-xs font-medium text-gray-500 hover:text-gray-700 pl-2 py-0.5"
-                    onClick={() => {/* TODO: 展開更多 */}}
+                    onClick={() => setExpandedAllDay(!expandedAllDay)}
                   >
-                    還有 {taskBars.length - 3} 項...
+                    {expandedAllDay ? '收合' : `還有 ${taskBars.length - 3} 項...`}
                   </button>
                 )}
               </div>
@@ -521,7 +758,13 @@ export default function CalendarPage() {
         </div>
 
         {/* 下方：時間軸 + 有時間的任務 */}
-        <div className="flex-1 overflow-y-auto">
+        <div
+          className="flex-1 overflow-y-auto"
+          ref={timeGridRef}
+          onMouseMove={handleDragMove}
+          onMouseUp={handleDragEnd}
+          onMouseLeave={handleDragEnd}
+        >
           <div className="flex">
             <div className="w-14 shrink-0 border-r border-gray-200/50">
               {hours.map((hour) => (
@@ -537,24 +780,103 @@ export default function CalendarPage() {
               {weekDays.map((day, dayIdx) => {
                 const isTodayDate = isToday(day)
 
-                // 取得這天有時間的任務（開始時間不是 00:00）
+                // 取得這天的「單日時間任務」（有時間且同一天結束）
                 const timedTasks = tasks.filter((task: Task) => {
-                  // 檢查任務是否在這天
+                  // 只顯示單日時間任務
+                  if (!isSingleDayTimedTask(task)) return false
+
                   const taskStart = task.startDate ? new Date(task.startDate) : null
                   const taskEnd = task.dueDate ? new Date(task.dueDate) : null
 
-                  // 需要有時間（不是午夜）
-                  const hasTime = (taskStart && (taskStart.getHours() !== 0 || taskStart.getMinutes() !== 0)) ||
-                                 (taskEnd && (taskEnd.getHours() !== 0 || taskEnd.getMinutes() !== 0))
-
-                  if (!hasTime) return false
-
-                  // 檢查是否在這天
                   if (taskStart && isSameDay(taskStart, day)) return true
                   if (taskEnd && isSameDay(taskEnd, day)) return true
 
                   return false
                 })
+
+                // 計算重疊任務的並排位置（Apple Calendar 風格）
+                const getTaskLayout = (tasksToLayout: Task[]) => {
+                  const layoutMap = new Map<string, { column: number; totalColumns: number }>()
+
+                  // 為每個任務計算時間範圍
+                  const taskRanges = tasksToLayout.map(task => {
+                    const currentTask = draggingTask?.id === task.id ? draggingTask : task
+                    const taskStart = currentTask.startDate ? new Date(currentTask.startDate) : null
+                    const taskEnd = currentTask.dueDate ? new Date(currentTask.dueDate) : null
+
+                    let startMinutes = 0
+                    let endMinutes = 60 // 預設 1 小時
+
+                    if (taskStart && isSameDay(taskStart, day)) {
+                      startMinutes = taskStart.getHours() * 60 + taskStart.getMinutes()
+                      if (taskEnd && isSameDay(taskEnd, day)) {
+                        endMinutes = taskEnd.getHours() * 60 + taskEnd.getMinutes()
+                      } else {
+                        endMinutes = startMinutes + 60
+                      }
+                    } else if (taskEnd && isSameDay(taskEnd, day)) {
+                      endMinutes = taskEnd.getHours() * 60 + taskEnd.getMinutes()
+                      startMinutes = endMinutes - 60
+                    }
+
+                    return { task, startMinutes, endMinutes }
+                  }).sort((a, b) => a.startMinutes - b.startMinutes)
+
+                  // 找出重疊的任務群組
+                  const groups: typeof taskRanges[] = []
+                  let currentGroup: typeof taskRanges = []
+
+                  taskRanges.forEach(range => {
+                    if (currentGroup.length === 0) {
+                      currentGroup.push(range)
+                    } else {
+                      const overlaps = currentGroup.some(r =>
+                        range.startMinutes < r.endMinutes && range.endMinutes > r.startMinutes
+                      )
+                      if (overlaps) {
+                        currentGroup.push(range)
+                      } else {
+                        groups.push(currentGroup)
+                        currentGroup = [range]
+                      }
+                    }
+                  })
+                  if (currentGroup.length > 0) groups.push(currentGroup)
+
+                  // 為每個群組分配欄位
+                  groups.forEach(group => {
+                    const columns: typeof taskRanges[] = []
+
+                    group.forEach(range => {
+                      let placed = false
+                      for (let col = 0; col < columns.length; col++) {
+                        const canPlace = columns[col].every(r =>
+                          range.startMinutes >= r.endMinutes || range.endMinutes <= r.startMinutes
+                        )
+                        if (canPlace) {
+                          columns[col].push(range)
+                          layoutMap.set(range.task.id, { column: col, totalColumns: 0 })
+                          placed = true
+                          break
+                        }
+                      }
+                      if (!placed) {
+                        columns.push([range])
+                        layoutMap.set(range.task.id, { column: columns.length - 1, totalColumns: 0 })
+                      }
+                    })
+
+                    // 更新總欄數
+                    group.forEach(range => {
+                      const layout = layoutMap.get(range.task.id)!
+                      layout.totalColumns = columns.length
+                    })
+                  })
+
+                  return layoutMap
+                }
+
+                const taskLayout = getTaskLayout(timedTasks)
 
                 return (
                   <div key={dayIdx} className="border-r border-gray-200/30 last:border-r-0 relative">
@@ -564,18 +886,22 @@ export default function CalendarPage() {
 
                     {/* 有時間的任務 */}
                     {timedTasks.map((task) => {
-                      // 決定使用哪個時間來定位
+                      // 如果這個任務正在被拖曳，跳過（會在下面單獨渲染）
+                      if (draggingTask?.id === task.id) return null
+
                       const taskStart = task.startDate ? new Date(task.startDate) : null
                       const taskEnd = task.dueDate ? new Date(task.dueDate) : null
 
-                      // 優先使用開始時間，否則用截止時間
                       let displayTime: Date
                       let endTime: Date | null = null
 
-                      if (taskStart && isSameDay(taskStart, day) && (taskStart.getHours() !== 0 || taskStart.getMinutes() !== 0)) {
+                      // 判斷是否為時間點任務（開始=結束）
+                      const isPointTask = taskStart && taskEnd && taskStart.getTime() === taskEnd.getTime()
+
+                      if (taskStart && isSameDay(taskStart, day)) {
+                        // 有開始時間且在這天
                         displayTime = taskStart
-                        // 如果同一天有截止時間，用它來計算長度
-                        if (taskEnd && isSameDay(taskEnd, day) && (taskEnd.getHours() !== 0 || taskEnd.getMinutes() !== 0)) {
+                        if (taskEnd && isSameDay(taskEnd, day)) {
                           endTime = taskEnd
                         }
                       } else if (taskEnd && isSameDay(taskEnd, day)) {
@@ -587,52 +913,137 @@ export default function CalendarPage() {
                       const startHour = displayTime.getHours()
                       const startMinute = displayTime.getMinutes()
 
-                      // 計算位置（從 6:00 開始，每小時 56px）
-                      const topOffset = (startHour - 6) * 56 + (startMinute / 60) * 56
+                      // 計算位置：如果是 00:00 的時間點任務，顯示在 6:00 位置
+                      let effectiveHour = startHour
+                      if (startHour < 6) {
+                        effectiveHour = 6 // 早於 6:00 的任務顯示在 6:00 位置
+                      }
+                      const topOffset = (effectiveHour - 6) * 56 + (startHour >= 6 ? (startMinute / 60) * 56 : 0)
 
-                      // 計算高度（如果有結束時間）
-                      let height = 50 // 預設高度
-                      if (endTime) {
+                      let height = 50
+                      if (endTime && !isPointTask) {
                         const durationMinutes = differenceInMinutes(endTime, displayTime)
                         height = Math.max(24, (durationMinutes / 60) * 56 - 4)
                       }
 
-                      // 如果時間在 6:00 之前，不顯示
-                      if (startHour < 6) return null
-
                       const colors = getTaskBarStyle(task)
+
+                      // 取得並排位置
+                      const layout = taskLayout.get(task.id) || { column: 0, totalColumns: 1 }
+                      const columnWidth = 100 / layout.totalColumns
+                      const leftOffset = layout.column * columnWidth
 
                       return (
                         <div
                           key={task.id}
                           className={`
-                            absolute left-1 right-1 rounded-md px-1.5 py-1 text-xs cursor-pointer
-                            hover:brightness-95 transition-all overflow-hidden
+                            absolute rounded-md px-1 py-1 text-xs
+                            overflow-hidden select-none
                             ${colors.bg} ${colors.text}
                             ${task.status === 'completed' ? 'opacity-50' : ''}
+                            cursor-grab hover:brightness-95 hover:shadow-md
                           `}
                           style={{
                             top: `${topOffset}px`,
                             height: `${height}px`,
+                            left: `calc(${leftOffset}% + 2px)`,
+                            width: `calc(${columnWidth}% - 4px)`,
                             zIndex: 5,
                           }}
-                          onClick={() => setSelectedTask(task)}
+                          onMouseDown={(e) => handleDragStart(e, task, 'move', dayIdx)}
                           title={`${task.title} - ${format(displayTime, 'HH:mm')}${endTime ? ` ~ ${format(endTime, 'HH:mm')}` : ''}`}
                         >
-                          <div className="flex items-start gap-1">
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-0.5 ${colors.dot}`} />
-                            <div className="flex-1 min-w-0">
-                              <p className={`font-medium truncate leading-tight ${task.status === 'completed' ? 'line-through' : ''}`}>
+                          <div className="flex items-start gap-0.5 h-full">
+                            <span className={`w-1 h-full rounded-full shrink-0 ${colors.dot}`} />
+                            <div className="flex-1 min-w-0 overflow-hidden">
+                              <p className={`font-medium truncate leading-tight text-[11px] ${task.status === 'completed' ? 'line-through' : ''}`}>
                                 {task.title}
                               </p>
-                              <p className="text-[10px] opacity-75">
-                                {format(displayTime, 'HH:mm')}{endTime ? ` - ${format(endTime, 'HH:mm')}` : ''}
+                              {height > 35 && (
+                                <p className="text-[10px] opacity-75 truncate">
+                                  {format(displayTime, 'HH:mm')}{endTime ? ` - ${format(endTime, 'HH:mm')}` : ''}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* 底部 resize handle - 只要有開始時間就可以調整 */}
+                          {taskStart && (
+                            <div
+                              className="absolute bottom-0 left-0 right-0 h-6 cursor-ns-resize group z-10"
+                              onMouseDown={(e) => {
+                                e.stopPropagation()
+                                e.preventDefault()
+                                handleDragStart(e, task, 'resize', dayIdx)
+                              }}
+                            >
+                              <div className="absolute bottom-1 left-1/2 -translate-x-1/2 w-12 h-2 rounded-full bg-current opacity-30 group-hover:opacity-70 transition-opacity" />
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+
+                    {/* 拖曳中的任務 - 單獨渲染以支援跨天顯示 */}
+                    {draggingTask && (() => {
+                      const dragTaskStart = draggingTask.startDate ? new Date(draggingTask.startDate) : null
+                      const dragTaskEnd = draggingTask.dueDate ? new Date(draggingTask.dueDate) : null
+
+                      // 檢查拖曳中的任務是否應該顯示在這一天
+                      if (!dragTaskStart || !isSameDay(dragTaskStart, day)) return null
+                      if (dragTaskStart.getHours() === 0 && dragTaskStart.getMinutes() === 0) return null
+
+                      const displayTime = dragTaskStart
+                      const endTime = dragTaskEnd && isSameDay(dragTaskEnd, day) ? dragTaskEnd : null
+
+                      const startHour = displayTime.getHours()
+                      const startMinute = displayTime.getMinutes()
+                      const topOffset = (startHour - 6) * 56 + (startMinute / 60) * 56
+
+                      let height = 50
+                      if (endTime) {
+                        const durationMinutes = differenceInMinutes(endTime, displayTime)
+                        height = Math.max(24, (durationMinutes / 60) * 56 - 4)
+                      }
+
+                      if (startHour < 6) return null
+
+                      const colors = getTaskBarStyle(draggingTask)
+
+                      return (
+                        <div
+                          key={`dragging-${draggingTask.id}`}
+                          className={`
+                            absolute rounded-md px-1 py-1 text-xs
+                            overflow-hidden select-none
+                            ${colors.bg} ${colors.text}
+                            ${draggingTask.status === 'completed' ? 'opacity-50' : ''}
+                            shadow-lg ring-2 ring-primary cursor-grabbing
+                          `}
+                          style={{
+                            top: `${topOffset}px`,
+                            height: `${height}px`,
+                            left: '2px',
+                            right: '2px',
+                            zIndex: 30,
+                          }}
+                        >
+                          <div className="flex items-start gap-0.5 h-full">
+                            <span className={`w-1 h-full rounded-full shrink-0 ${colors.dot}`} />
+                            <div className="flex-1 min-w-0 overflow-hidden">
+                              <p className={`font-medium truncate leading-tight text-[11px] ${draggingTask.status === 'completed' ? 'line-through' : ''}`}>
+                                {draggingTask.title}
                               </p>
+                              {height > 35 && (
+                                <p className="text-[10px] opacity-75 truncate">
+                                  {format(displayTime, 'HH:mm')}{endTime ? ` - ${format(endTime, 'HH:mm')}` : ''}
+                                </p>
+                              )}
                             </div>
                           </div>
                         </div>
                       )
-                    })}
+                    })()}
 
                     {/* 當前時間線 */}
                     {isTodayDate && (
@@ -959,12 +1370,39 @@ export default function CalendarPage() {
                   </Badge>
                 </div>
 
+                {/* 開始日期 */}
+                {selectedTask.startDate && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground w-20">開始時間</span>
+                    <span className="text-sm">
+                      {format(new Date(selectedTask.startDate), 'yyyy/MM/dd HH:mm', { locale: zhTW })}
+                    </span>
+                  </div>
+                )}
+
                 {/* 截止日期 */}
                 {selectedTask.dueDate && (
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground w-20">截止日期</span>
+                    <span className="text-sm text-muted-foreground w-20">截止時間</span>
                     <span className="text-sm">
-                      {format(new Date(selectedTask.dueDate), 'yyyy/MM/dd', { locale: zhTW })}
+                      {format(new Date(selectedTask.dueDate), 'yyyy/MM/dd HH:mm', { locale: zhTW })}
+                    </span>
+                  </div>
+                )}
+
+                {/* 時長 */}
+                {selectedTask.startDate && selectedTask.dueDate && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground w-20">時長</span>
+                    <span className="text-sm">
+                      {(() => {
+                        const minutes = differenceInMinutes(new Date(selectedTask.dueDate), new Date(selectedTask.startDate))
+                        const hours = Math.floor(minutes / 60)
+                        const mins = minutes % 60
+                        if (hours > 0 && mins > 0) return `${hours} 小時 ${mins} 分鐘`
+                        if (hours > 0) return `${hours} 小時`
+                        return `${mins} 分鐘`
+                      })()}
                     </span>
                   </div>
                 )}
