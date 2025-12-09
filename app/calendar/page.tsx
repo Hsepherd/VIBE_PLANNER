@@ -42,17 +42,40 @@ import {
   User,
   FolderKanban,
   Loader2,
+  Plus,
+  X,
 } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 type ViewMode = 'day' | 'week' | 'month'
 
 export default function CalendarPage() {
-  const { tasks, isLoading, updateTask: updateSupabaseTask } = useSupabaseTasks()
+  const { tasks, isLoading, updateTask: updateSupabaseTask, addTask } = useSupabaseTasks()
 
   const [currentDate, setCurrentDate] = useState(new Date())
   const [viewMode, setViewMode] = useState<ViewMode>('week')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [expandedAllDay, setExpandedAllDay] = useState(false) // 全天區域是否展開
+
+  // 新增任務彈窗狀態
+  const [showNewTaskForm, setShowNewTaskForm] = useState(false)
+  const [newTaskData, setNewTaskData] = useState({
+    title: '',
+    description: '',
+    priority: 'medium' as 'low' | 'medium' | 'high' | 'urgent',
+    startDate: null as Date | null,
+    dueDate: null as Date | null,
+    isAllDay: false,
+  })
+  const [isCreating, setIsCreating] = useState(false)
 
   // 滑動切換日期狀態
   const [swipeOffset, setSwipeOffset] = useState(0) // 滑動位移（用於視覺回饋）
@@ -267,6 +290,65 @@ export default function CalendarPage() {
       await updateSupabaseTask(task.id, { status: 'pending', completedAt: undefined })
     } else {
       await updateSupabaseTask(task.id, { status: 'completed', completedAt: new Date() })
+    }
+  }
+
+  // 點擊時間格新增任務
+  const handleTimeSlotClick = useCallback((day: Date, hour: number, minute: number = 0) => {
+    const startTime = setMinutes(setHours(day, hour), minute)
+    const endTime = addMinutes(startTime, 60) // 預設 1 小時
+    setNewTaskData({
+      title: '',
+      description: '',
+      priority: 'medium',
+      startDate: startTime,
+      dueDate: endTime,
+      isAllDay: false,
+    })
+    setShowNewTaskForm(true)
+  }, [])
+
+  // 點擊全天區域新增全天任務
+  const handleAllDayClick = useCallback((day: Date) => {
+    const dayStart = startOfDay(day)
+    setNewTaskData({
+      title: '',
+      description: '',
+      priority: 'medium',
+      startDate: dayStart,
+      dueDate: dayStart, // 全天任務開始=結束（同一天 00:00）
+      isAllDay: true,
+    })
+    setShowNewTaskForm(true)
+  }, [])
+
+  // 建立新任務
+  const handleCreateTask = async () => {
+    if (!newTaskData.title.trim()) return
+
+    setIsCreating(true)
+    try {
+      await addTask({
+        title: newTaskData.title.trim(),
+        description: newTaskData.description.trim() || undefined,
+        status: 'pending',
+        priority: newTaskData.priority,
+        startDate: newTaskData.startDate || undefined,
+        dueDate: newTaskData.dueDate || undefined,
+      })
+      setShowNewTaskForm(false)
+      setNewTaskData({
+        title: '',
+        description: '',
+        priority: 'medium',
+        startDate: null,
+        dueDate: null,
+        isAllDay: false,
+      })
+    } catch (err) {
+      console.error('建立任務失敗:', err)
+    } finally {
+      setIsCreating(false)
     }
   }
 
@@ -747,10 +829,14 @@ export default function CalendarPage() {
                   </button>
                 )}
               </div>
-              {/* 欄位分隔線（極淡） */}
-              <div className="absolute inset-0 grid grid-cols-7 pointer-events-none">
-                {weekDays.map((_, idx) => (
-                  <div key={idx} className="border-r border-gray-200/30 last:border-r-0" />
+              {/* 欄位分隔線 + 點擊新增全天任務 */}
+              <div className="absolute inset-0 grid grid-cols-7">
+                {weekDays.map((day, idx) => (
+                  <div
+                    key={idx}
+                    className="border-r border-gray-200/30 last:border-r-0 cursor-pointer hover:bg-blue-50/30 transition-colors"
+                    onClick={() => handleAllDayClick(day)}
+                  />
                 ))}
               </div>
             </div>
@@ -881,7 +967,11 @@ export default function CalendarPage() {
                 return (
                   <div key={dayIdx} className="border-r border-gray-200/30 last:border-r-0 relative">
                     {hours.map((hour) => (
-                      <div key={hour} className="h-14 border-b border-gray-100/50" />
+                      <div
+                        key={hour}
+                        className="h-14 border-b border-gray-100/50 cursor-pointer hover:bg-blue-50/30 transition-colors"
+                        onClick={() => handleTimeSlotClick(day, hour)}
+                      />
                     ))}
 
                     {/* 有時間的任務 */}
@@ -1308,6 +1398,123 @@ export default function CalendarPage() {
           </ScrollArea>
         )}
       </div>
+
+      {/* 新增任務彈窗 */}
+      {showNewTaskForm && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center"
+          onClick={() => setShowNewTaskForm(false)}
+        >
+          <div
+            className="bg-background rounded-lg shadow-xl w-full max-w-md mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 border-b flex items-center justify-between">
+              <h2 className="text-lg font-semibold">
+                {newTaskData.isAllDay ? '新增全天任務' : '新增任務'}
+              </h2>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowNewTaskForm(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              {/* 任務標題 */}
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">任務名稱</label>
+                <Input
+                  placeholder="輸入任務名稱..."
+                  value={newTaskData.title}
+                  onChange={(e) => setNewTaskData(prev => ({ ...prev, title: e.target.value }))}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newTaskData.title.trim()) {
+                      handleCreateTask()
+                    }
+                  }}
+                />
+              </div>
+
+              {/* 任務描述 */}
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">描述（選填）</label>
+                <Textarea
+                  placeholder="輸入任務描述..."
+                  value={newTaskData.description}
+                  onChange={(e) => setNewTaskData(prev => ({ ...prev, description: e.target.value }))}
+                  rows={3}
+                />
+              </div>
+
+              {/* 優先級 */}
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">優先級</label>
+                <Select
+                  value={newTaskData.priority}
+                  onValueChange={(value: 'low' | 'medium' | 'high' | 'urgent') =>
+                    setNewTaskData(prev => ({ ...prev, priority: value }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">低</SelectItem>
+                    <SelectItem value="medium">中</SelectItem>
+                    <SelectItem value="high">高</SelectItem>
+                    <SelectItem value="urgent">緊急</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* 時間顯示 */}
+              <div className="bg-muted/50 rounded-lg p-3 space-y-2">
+                <div className="flex items-center gap-2 text-sm">
+                  <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                  {newTaskData.isAllDay ? (
+                    <span>
+                      {newTaskData.startDate && format(newTaskData.startDate, 'yyyy/MM/dd (EEE)', { locale: zhTW })}
+                      {' '}全天
+                    </span>
+                  ) : (
+                    <span>
+                      {newTaskData.startDate && format(newTaskData.startDate, 'yyyy/MM/dd HH:mm', { locale: zhTW })}
+                      {newTaskData.dueDate && ` ~ ${format(newTaskData.dueDate, 'HH:mm')}`}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* 操作按鈕 */}
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setShowNewTaskForm(false)}
+                >
+                  取消
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={handleCreateTask}
+                  disabled={!newTaskData.title.trim() || isCreating}
+                >
+                  {isCreating ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Plus className="h-4 w-4 mr-2" />
+                  )}
+                  建立任務
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 任務詳情側邊欄 */}
       {selectedTask && (
