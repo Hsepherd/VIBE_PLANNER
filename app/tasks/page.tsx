@@ -94,6 +94,7 @@ import {
   LayoutGrid,
   ChevronsUpDown,
   ChevronUp,
+  Clock,
 } from 'lucide-react'
 
 type SortMode = 'priority' | 'dueDate' | 'assignee' | 'tag' | 'group' | 'project'
@@ -1913,7 +1914,13 @@ export default function TasksPage() {
     dueDate: 110,
     priority: 80,
     project: 100,
+    createdAt: 100,
   })
+
+  // 欄位順序（可拖曳調整）
+  const [columnOrder, setColumnOrder] = useState<string[]>([
+    'assignee', 'startDate', 'dueDate', 'priority', 'project', 'createdAt'
+  ])
 
   // 拖曳調整欄位寬度
   const [resizing, setResizing] = useState<string | null>(null)
@@ -2213,100 +2220,139 @@ export default function TasksPage() {
           )}
         </div>
 
-        {/* 負責人欄位 - 動態寬度（可新增/刪除成員）*/}
-        <div className="h-12 flex items-center shrink-0" style={{ width: columnWidths.assignee }}>
-          <AssigneeDropdown
-            task={task}
-            teamMembers={teamMembers}
-            onUpdate={(assignee) => handleUpdateTask(task.id, { assignee })}
-            onAddMember={handleAddMember}
-            onRemoveMember={handleRemoveMember}
-            open={assigneeOpen}
-            onOpenChange={setAssigneeOpen}
-          />
-        </div>
+        {/* 動態欄位 - 根據 columnOrder 順序渲染 */}
+        {columnOrder.map((colKey) => {
+          const width = columnWidths[colKey as keyof typeof columnWidths]
 
-        {/* 開始日欄位 - 動態寬度 */}
-        <div className="h-12 flex items-center shrink-0" style={{ width: columnWidths.startDate }}>
-          <Popover open={startDatePickerOpen} onOpenChange={setStartDatePickerOpen}>
-            <PopoverTrigger asChild>
-              <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
-                <CalendarDays className="h-4 w-4 shrink-0" />
-                <span className="flex-1 text-left">{task.startDate ? formatDueDate(new Date(task.startDate)) : '-'}</span>
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <DateTimePicker
-                value={task.startDate ? new Date(task.startDate) : undefined}
-                onChange={(date) => { handleUpdateTask(task.id, { startDate: date || undefined }); setStartDatePickerOpen(false) }}
-                onClose={() => setStartDatePickerOpen(false)}
-              />
-            </PopoverContent>
-          </Popover>
-        </div>
+          // 負責人欄位
+          if (colKey === 'assignee') {
+            return (
+              <div key={colKey} className="h-12 flex items-center shrink-0" style={{ width }}>
+                <AssigneeDropdown
+                  task={task}
+                  teamMembers={teamMembers}
+                  onUpdate={(assignee) => handleUpdateTask(task.id, { assignee })}
+                  onAddMember={handleAddMember}
+                  onRemoveMember={handleRemoveMember}
+                  open={assigneeOpen}
+                  onOpenChange={setAssigneeOpen}
+                />
+              </div>
+            )
+          }
 
-        {/* 截止日欄位 - 動態寬度 */}
-        <div className="h-12 flex items-center shrink-0" style={{ width: columnWidths.dueDate }}>
-          <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
-            <PopoverTrigger asChild>
-              <button className={`inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full ${
-                isOverdue ? 'text-red-600 bg-red-50' : 'text-gray-600'
-              }`}>
-                <Calendar className="h-4 w-4 shrink-0" />
-                <span className="flex-1 text-left">{task.dueDate ? formatDueDate(new Date(task.dueDate)) : '-'}</span>
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <DateTimePicker
-                value={task.dueDate ? new Date(task.dueDate) : undefined}
-                onChange={(date) => { handleUpdateTask(task.id, { dueDate: date || undefined }); setDatePickerOpen(false) }}
-                onClose={() => setDatePickerOpen(false)}
-              />
-            </PopoverContent>
-          </Popover>
-        </div>
+          // 開始日欄位
+          if (colKey === 'startDate') {
+            return (
+              <div key={colKey} className="h-12 flex items-center shrink-0" style={{ width }}>
+                <Popover open={startDatePickerOpen} onOpenChange={setStartDatePickerOpen}>
+                  <PopoverTrigger asChild>
+                    <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
+                      <CalendarDays className="h-4 w-4 shrink-0" />
+                      <span className="flex-1 text-left">{task.startDate ? formatDueDate(new Date(task.startDate)) : '-'}</span>
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <DateTimePicker
+                      value={task.startDate ? new Date(task.startDate) : undefined}
+                      onChange={(date) => { handleUpdateTask(task.id, { startDate: date || undefined }); setStartDatePickerOpen(false) }}
+                      onClose={() => setStartDatePickerOpen(false)}
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+            )
+          }
 
-        {/* 優先級欄位 - 動態寬度 */}
-        <div className="h-12 flex items-center shrink-0" style={{ width: columnWidths.priority }}>
-          <DropdownMenu open={priorityOpen} onOpenChange={setPriorityOpen}>
-            <DropdownMenuTrigger asChild>
-              <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
-                <span className="text-base shrink-0">{priorityConfig[task.priority].emoji}</span>
-                <span className="flex-1 text-left hidden sm:inline">{priorityConfig[task.priority].label}</span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-28">
-              {(Object.keys(priorityConfig) as Array<keyof typeof priorityConfig>).map((key) => (
-                <DropdownMenuItem key={key} onClick={() => handleUpdateTask(task.id, { priority: key })} className="text-xs">
-                  <span className="mr-2">{priorityConfig[key].emoji}</span>{priorityConfig[key].label}
-                  {task.priority === key && <Check className="h-3 w-3 ml-auto" />}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+          // 截止日欄位
+          if (colKey === 'dueDate') {
+            return (
+              <div key={colKey} className="h-12 flex items-center shrink-0" style={{ width }}>
+                <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+                  <PopoverTrigger asChild>
+                    <button className={`inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full ${
+                      isOverdue ? 'text-red-600 bg-red-50' : 'text-gray-600'
+                    }`}>
+                      <Calendar className="h-4 w-4 shrink-0" />
+                      <span className="flex-1 text-left">{task.dueDate ? formatDueDate(new Date(task.dueDate)) : '-'}</span>
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <DateTimePicker
+                      value={task.dueDate ? new Date(task.dueDate) : undefined}
+                      onChange={(date) => { handleUpdateTask(task.id, { dueDate: date || undefined }); setDatePickerOpen(false) }}
+                      onClose={() => setDatePickerOpen(false)}
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+            )
+          }
 
-        {/* 專案欄位 - 動態寬度 */}
-        <div className="h-12 flex items-center shrink-0" style={{ width: columnWidths.project }}>
-          <DropdownMenu open={projectOpen} onOpenChange={setProjectOpen}>
-            <DropdownMenuTrigger asChild>
-              <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
-                <FolderKanban className="h-4 w-4 shrink-0 text-violet-500" />
-                <span className="flex-1 text-left truncate">{getProjectName(task.projectId) || '-'}</span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-40">
-              {projects.filter(p => p.status === 'active').map((project) => (
-                <DropdownMenuItem key={project.id} onClick={() => handleUpdateTask(task.id, { projectId: project.id })} className="text-xs">
-                  <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />{project.name}
-                  {task.projectId === project.id && <Check className="h-3 w-3 ml-auto" />}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { projectId: undefined })}>清除專案</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+          // 優先級欄位
+          if (colKey === 'priority') {
+            return (
+              <div key={colKey} className="h-12 flex items-center shrink-0" style={{ width }}>
+                <DropdownMenu open={priorityOpen} onOpenChange={setPriorityOpen}>
+                  <DropdownMenuTrigger asChild>
+                    <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
+                      <span className="text-base shrink-0">{priorityConfig[task.priority].emoji}</span>
+                      <span className="flex-1 text-left hidden sm:inline">{priorityConfig[task.priority].label}</span>
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-28">
+                    {(Object.keys(priorityConfig) as Array<keyof typeof priorityConfig>).map((key) => (
+                      <DropdownMenuItem key={key} onClick={() => handleUpdateTask(task.id, { priority: key })} className="text-xs">
+                        <span className="mr-2">{priorityConfig[key].emoji}</span>{priorityConfig[key].label}
+                        {task.priority === key && <Check className="h-3 w-3 ml-auto" />}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )
+          }
+
+          // 專案欄位
+          if (colKey === 'project') {
+            return (
+              <div key={colKey} className="h-12 flex items-center shrink-0" style={{ width }}>
+                <DropdownMenu open={projectOpen} onOpenChange={setProjectOpen}>
+                  <DropdownMenuTrigger asChild>
+                    <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
+                      <FolderKanban className="h-4 w-4 shrink-0 text-violet-500" />
+                      <span className="flex-1 text-left truncate">{getProjectName(task.projectId) || '-'}</span>
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-40">
+                    {projects.filter(p => p.status === 'active').map((project) => (
+                      <DropdownMenuItem key={project.id} onClick={() => handleUpdateTask(task.id, { projectId: project.id })} className="text-xs">
+                        <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />{project.name}
+                        {task.projectId === project.id && <Check className="h-3 w-3 ml-auto" />}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { projectId: undefined })}>清除專案</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )
+          }
+
+          // 加入日期欄位（唯讀）
+          if (colKey === 'createdAt') {
+            return (
+              <div key={colKey} className="h-12 flex items-center shrink-0" style={{ width }}>
+                <div className="inline-flex items-center gap-2 text-xs px-3 py-1.5 w-full h-full text-gray-500">
+                  <Clock className="h-4 w-4 shrink-0" />
+                  <span className="flex-1 text-left">{task.createdAt ? format(new Date(task.createdAt), 'M/d', { locale: zhTW }) : '-'}</span>
+                </div>
+              </div>
+            )
+          }
+
+          return null
+        })}
 
         {/* 更多操作 - 固定寬度 */}
         <div className="w-12 h-12 flex items-center justify-center shrink-0">
@@ -2411,7 +2457,8 @@ export default function TasksPage() {
     groupKey: string
     teamMembers: string[]
     priorityConfig: PriorityConfig
-    columnWidths: { assignee: number; startDate: number; dueDate: number; priority: number; project: number }
+    columnWidths: { assignee: number; startDate: number; dueDate: number; priority: number; project: number; createdAt: number }
+    columnOrder: string[]
     projects: Project[]
     onSubmit: (data: { title: string; assignee?: string; startDate?: Date; dueDate?: Date; priority: Task['priority']; projectId?: string }) => void
     onCancel: () => void
@@ -2468,129 +2515,168 @@ export default function TasksPage() {
           />
         </div>
 
-        {/* 負責人選擇 */}
-        <div className="h-11 flex items-center shrink-0" style={{ width: columnWidths.assignee }}>
-          <Popover open={assigneeOpen} onOpenChange={setAssigneeOpen}>
-            <PopoverTrigger asChild>
-              <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
-                <User className="h-4 w-4 shrink-0" />
-                <span className="flex-1 text-left truncate">{assignee || '-'}</span>
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-40 p-1" align="start">
-              <div className="space-y-0.5">
-                {teamMembers.map((member) => (
-                  <button
-                    key={member}
-                    onClick={() => { setAssignee(member); setAssigneeOpen(false) }}
-                    className="flex items-center w-full px-2 py-1.5 text-xs rounded hover:bg-gray-100 transition-colors"
-                  >
-                    <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-[10px] font-medium mr-2 shrink-0">
-                      {member.charAt(0).toUpperCase()}
-                    </span>
-                    <span className="truncate">{member}</span>
-                    {assignee === member && <Check className="h-3 w-3 ml-auto text-blue-600" />}
-                  </button>
-                ))}
-                {assignee && (
-                  <>
-                    <Separator className="my-1" />
-                    <button
-                      onClick={() => { setAssignee(undefined); setAssigneeOpen(false) }}
-                      className="flex items-center w-full px-2 py-1.5 text-xs text-gray-500 rounded hover:bg-gray-100 transition-colors"
-                    >
-                      清除
+        {/* 動態欄位 - 根據 columnOrder 順序渲染 */}
+        {columnOrder.map((colKey) => {
+          const width = columnWidths[colKey as keyof typeof columnWidths]
+
+          // 負責人欄位
+          if (colKey === 'assignee') {
+            return (
+              <div key={colKey} className="h-11 flex items-center shrink-0" style={{ width }}>
+                <Popover open={assigneeOpen} onOpenChange={setAssigneeOpen}>
+                  <PopoverTrigger asChild>
+                    <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
+                      <User className="h-4 w-4 shrink-0" />
+                      <span className="flex-1 text-left truncate">{assignee || '-'}</span>
                     </button>
-                  </>
-                )}
+                  </PopoverTrigger>
+                  <PopoverContent className="w-40 p-1" align="start">
+                    <div className="space-y-0.5">
+                      {teamMembers.map((member) => (
+                        <button
+                          key={member}
+                          onClick={() => { setAssignee(member); setAssigneeOpen(false) }}
+                          className="flex items-center w-full px-2 py-1.5 text-xs rounded hover:bg-gray-100 transition-colors"
+                        >
+                          <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-[10px] font-medium mr-2 shrink-0">
+                            {member.charAt(0).toUpperCase()}
+                          </span>
+                          <span className="truncate">{member}</span>
+                          {assignee === member && <Check className="h-3 w-3 ml-auto text-blue-600" />}
+                        </button>
+                      ))}
+                      {assignee && (
+                        <>
+                          <Separator className="my-1" />
+                          <button
+                            onClick={() => { setAssignee(undefined); setAssigneeOpen(false) }}
+                            className="flex items-center w-full px-2 py-1.5 text-xs text-gray-500 rounded hover:bg-gray-100 transition-colors"
+                          >
+                            清除
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
-            </PopoverContent>
-          </Popover>
-        </div>
+            )
+          }
 
-        {/* 開始日選擇 */}
-        <div className="h-11 flex items-center shrink-0" style={{ width: columnWidths.startDate }}>
-          <Popover open={startDateOpen} onOpenChange={setStartDateOpen}>
-            <PopoverTrigger asChild>
-              <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
-                <CalendarDays className="h-4 w-4 shrink-0" />
-                <span className="flex-1 text-left">{startDate ? formatDate(startDate) : '-'}</span>
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <DateTimePicker
-                value={startDate}
-                onChange={(date) => { setStartDate(date || undefined); setStartDateOpen(false) }}
-                onClose={() => setStartDateOpen(false)}
-              />
-            </PopoverContent>
-          </Popover>
-        </div>
+          // 開始日欄位
+          if (colKey === 'startDate') {
+            return (
+              <div key={colKey} className="h-11 flex items-center shrink-0" style={{ width }}>
+                <Popover open={startDateOpen} onOpenChange={setStartDateOpen}>
+                  <PopoverTrigger asChild>
+                    <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
+                      <CalendarDays className="h-4 w-4 shrink-0" />
+                      <span className="flex-1 text-left">{startDate ? formatDate(startDate) : '-'}</span>
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <DateTimePicker
+                      value={startDate}
+                      onChange={(date) => { setStartDate(date || undefined); setStartDateOpen(false) }}
+                      onClose={() => setStartDateOpen(false)}
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+            )
+          }
 
-        {/* 截止日選擇 */}
-        <div className="h-11 flex items-center shrink-0" style={{ width: columnWidths.dueDate }}>
-          <Popover open={dueDateOpen} onOpenChange={setDueDateOpen}>
-            <PopoverTrigger asChild>
-              <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
-                <Calendar className="h-4 w-4 shrink-0" />
-                <span className="flex-1 text-left">{dueDate ? formatDate(dueDate) : '-'}</span>
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <DateTimePicker
-                value={dueDate}
-                onChange={(date) => { setDueDate(date || undefined); setDueDateOpen(false) }}
-                onClose={() => setDueDateOpen(false)}
-              />
-            </PopoverContent>
-          </Popover>
-        </div>
+          // 截止日欄位
+          if (colKey === 'dueDate') {
+            return (
+              <div key={colKey} className="h-11 flex items-center shrink-0" style={{ width }}>
+                <Popover open={dueDateOpen} onOpenChange={setDueDateOpen}>
+                  <PopoverTrigger asChild>
+                    <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
+                      <Calendar className="h-4 w-4 shrink-0" />
+                      <span className="flex-1 text-left">{dueDate ? formatDate(dueDate) : '-'}</span>
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <DateTimePicker
+                      value={dueDate}
+                      onChange={(date) => { setDueDate(date || undefined); setDueDateOpen(false) }}
+                      onClose={() => setDueDateOpen(false)}
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+            )
+          }
 
-        {/* 優先級選擇 */}
-        <div className="h-11 flex items-center shrink-0" style={{ width: columnWidths.priority }}>
-          <DropdownMenu open={priorityOpen} onOpenChange={setPriorityOpen}>
-            <DropdownMenuTrigger asChild>
-              <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
-                <span className="text-base shrink-0">{priorityConfig[priority].emoji}</span>
-                <span className="flex-1 text-left hidden sm:inline">{priorityConfig[priority].label}</span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-28">
-              {(Object.keys(priorityConfig) as Array<Task['priority']>).map((key) => (
-                <DropdownMenuItem key={key} onClick={() => setPriority(key)} className="text-xs">
-                  <span className="mr-2">{priorityConfig[key].emoji}</span>{priorityConfig[key].label}
-                  {priority === key && <Check className="h-3 w-3 ml-auto" />}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+          // 優先級欄位
+          if (colKey === 'priority') {
+            return (
+              <div key={colKey} className="h-11 flex items-center shrink-0" style={{ width }}>
+                <DropdownMenu open={priorityOpen} onOpenChange={setPriorityOpen}>
+                  <DropdownMenuTrigger asChild>
+                    <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
+                      <span className="text-base shrink-0">{priorityConfig[priority].emoji}</span>
+                      <span className="flex-1 text-left hidden sm:inline">{priorityConfig[priority].label}</span>
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-28">
+                    {(Object.keys(priorityConfig) as Array<Task['priority']>).map((key) => (
+                      <DropdownMenuItem key={key} onClick={() => setPriority(key)} className="text-xs">
+                        <span className="mr-2">{priorityConfig[key].emoji}</span>{priorityConfig[key].label}
+                        {priority === key && <Check className="h-3 w-3 ml-auto" />}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )
+          }
 
-        {/* 專案選擇 */}
-        <div className="h-11 flex items-center shrink-0" style={{ width: columnWidths.project }}>
-          <DropdownMenu open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
-            <DropdownMenuTrigger asChild>
-              <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
-                <FolderKanban className="h-4 w-4 shrink-0 text-violet-500" />
-                <span className="flex-1 text-left truncate">{projects.find(p => p.id === projectId)?.name || '-'}</span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-40">
-              {projects.filter(p => p.status === 'active').map((project) => (
-                <DropdownMenuItem key={project.id} onClick={() => setProjectId(project.id)} className="text-xs">
-                  <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />{project.name}
-                  {projectId === project.id && <Check className="h-3 w-3 ml-auto" />}
-                </DropdownMenuItem>
-              ))}
-              {projectId && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem className="text-xs text-gray-500" onClick={() => setProjectId(undefined)}>清除專案</DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+          // 專案欄位
+          if (colKey === 'project') {
+            return (
+              <div key={colKey} className="h-11 flex items-center shrink-0" style={{ width }}>
+                <DropdownMenu open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
+                  <DropdownMenuTrigger asChild>
+                    <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
+                      <FolderKanban className="h-4 w-4 shrink-0 text-violet-500" />
+                      <span className="flex-1 text-left truncate">{projects.find(p => p.id === projectId)?.name || '-'}</span>
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-40">
+                    {projects.filter(p => p.status === 'active').map((project) => (
+                      <DropdownMenuItem key={project.id} onClick={() => setProjectId(project.id)} className="text-xs">
+                        <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />{project.name}
+                        {projectId === project.id && <Check className="h-3 w-3 ml-auto" />}
+                      </DropdownMenuItem>
+                    ))}
+                    {projectId && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem className="text-xs text-gray-500" onClick={() => setProjectId(undefined)}>清除專案</DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )
+          }
+
+          // 加入日期欄位（新增時不顯示）
+          if (colKey === 'createdAt') {
+            return (
+              <div key={colKey} className="h-11 flex items-center shrink-0" style={{ width }}>
+                <div className="inline-flex items-center gap-2 text-xs px-2 py-1.5 w-full h-full text-gray-400">
+                  <Clock className="h-4 w-4 shrink-0" />
+                  <span className="flex-1 text-left">-</span>
+                </div>
+              </div>
+            )
+          }
+
+          return null
+        })}
 
         {/* 操作按鈕 */}
         <div className="w-12 h-11 flex items-center justify-center shrink-0 gap-1">
@@ -2644,7 +2730,46 @@ export default function TasksPage() {
   const isAllSelected = totalSelectableTasks > 0 && selectedTaskIds.size === totalSelectableTasks
   const isPartiallySelected = selectedTaskIds.size > 0 && selectedTaskIds.size < totalSelectableTasks
 
-  // ClickUp 風格的表格標題列（含可拖曳調整寬度）
+  // 欄位設定
+  const columnConfig: Record<string, { label: string; icon: React.ReactNode; sortable?: boolean; sortField?: 'assignee' | 'startDate' | 'dueDate' | 'priority' }> = {
+    assignee: { label: '負責人', icon: <User className="h-4 w-4 shrink-0 mr-1" />, sortable: true, sortField: 'assignee' },
+    startDate: { label: '開始日', icon: <CalendarDays className="h-4 w-4 shrink-0 mr-1" />, sortable: true, sortField: 'startDate' },
+    dueDate: { label: '截止日', icon: <Calendar className="h-4 w-4 shrink-0 mr-1" />, sortable: true, sortField: 'dueDate' },
+    priority: { label: '優先級', icon: null, sortable: true, sortField: 'priority' },
+    project: { label: '專案', icon: <FolderKanban className="h-4 w-4 shrink-0 mr-1" />, sortable: false },
+    createdAt: { label: '加入日期', icon: <Clock className="h-4 w-4 shrink-0 mr-1" />, sortable: false },
+  }
+
+  // 欄位拖曳狀態
+  const [draggingColumn, setDraggingColumn] = useState<string | null>(null)
+
+  // 欄位拖曳處理
+  const handleColumnDragStart = (e: React.DragEvent, column: string) => {
+    setDraggingColumn(column)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', column)
+  }
+
+  const handleColumnDragOver = (e: React.DragEvent, targetColumn: string) => {
+    e.preventDefault()
+    if (!draggingColumn || draggingColumn === targetColumn) return
+
+    const dragIndex = columnOrder.indexOf(draggingColumn)
+    const targetIndex = columnOrder.indexOf(targetColumn)
+
+    if (dragIndex !== -1 && targetIndex !== -1) {
+      const newOrder = [...columnOrder]
+      newOrder.splice(dragIndex, 1)
+      newOrder.splice(targetIndex, 0, draggingColumn)
+      setColumnOrder(newOrder)
+    }
+  }
+
+  const handleColumnDragEnd = () => {
+    setDraggingColumn(null)
+  }
+
+  // ClickUp 風格的表格標題列（含可拖曳調整寬度和順序）
   const TableHeader = () => (
     <div className={`flex items-center bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 sticky top-0 z-10 ${resizing ? 'select-none' : ''}`}>
       {/* 拖曳手柄佔位 */}
@@ -2684,77 +2809,45 @@ export default function TasksPage() {
           {secondarySort.field !== 'title' && <ChevronsUpDown className="h-3 w-3 ml-1 opacity-0 group-hover:opacity-50" />}
         </button>
       </div>
-      {/* 負責人 - 可調整寬度 + 可點擊排序 */}
-      <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.assignee }}>
-        <ResizeHandle column="assignee" />
-        <button
-          onClick={() => setSecondarySort('assignee')}
-          className={`flex items-center gap-1 hover:text-gray-900 transition-colors ${secondarySort.field === 'assignee' ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
-        >
-          <User className="h-4 w-4 shrink-0 mr-1" />
-          負責人
-          {secondarySort.field === 'assignee' && (
-            secondarySort.direction === 'asc'
-              ? <ChevronUp className="h-3 w-3 ml-1" />
-              : <ChevronUp className="h-3 w-3 ml-1 rotate-180" />
-          )}
-        </button>
-      </div>
-      {/* 開始日期 - 可調整寬度 + 可點擊排序 */}
-      <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.startDate }}>
-        <ResizeHandle column="startDate" />
-        <button
-          onClick={() => setSecondarySort('startDate')}
-          className={`flex items-center gap-1 hover:text-gray-900 transition-colors ${secondarySort.field === 'startDate' ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
-        >
-          <CalendarDays className="h-4 w-4 shrink-0 mr-1" />
-          開始日
-          {secondarySort.field === 'startDate' && (
-            secondarySort.direction === 'asc'
-              ? <ChevronUp className="h-3 w-3 ml-1" />
-              : <ChevronUp className="h-3 w-3 ml-1 rotate-180" />
-          )}
-        </button>
-      </div>
-      {/* 截止日期 - 可調整寬度 + 可點擊排序 */}
-      <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.dueDate }}>
-        <ResizeHandle column="dueDate" />
-        <button
-          onClick={() => setSecondarySort('dueDate')}
-          className={`flex items-center gap-1 hover:text-gray-900 transition-colors ${secondarySort.field === 'dueDate' ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
-        >
-          <Calendar className="h-4 w-4 shrink-0 mr-1" />
-          截止日
-          {secondarySort.field === 'dueDate' && (
-            secondarySort.direction === 'asc'
-              ? <ChevronUp className="h-3 w-3 ml-1" />
-              : <ChevronUp className="h-3 w-3 ml-1 rotate-180" />
-          )}
-        </button>
-      </div>
-      {/* 優先級 - 可調整寬度 + 可點擊排序 */}
-      <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.priority }}>
-        <ResizeHandle column="priority" />
-        <button
-          onClick={() => setSecondarySort('priority')}
-          className={`flex items-center gap-1 hover:text-gray-900 transition-colors ${secondarySort.field === 'priority' ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
-        >
-          優先級
-          {secondarySort.field === 'priority' && (
-            secondarySort.direction === 'asc'
-              ? <ChevronUp className="h-3 w-3 ml-1" />
-              : <ChevronUp className="h-3 w-3 ml-1 rotate-180" />
-          )}
-        </button>
-      </div>
-      {/* 專案 - 可調整寬度 */}
-      <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.project }}>
-        <ResizeHandle column="project" />
-        <span className="flex items-center gap-1 text-gray-500">
-          <FolderKanban className="h-4 w-4 shrink-0 mr-1" />
-          專案
-        </span>
-      </div>
+      {/* 動態欄位 - 根據 columnOrder 順序渲染 */}
+      {columnOrder.map((colKey) => {
+        const config = columnConfig[colKey]
+        if (!config) return null
+        const width = columnWidths[colKey as keyof typeof columnWidths]
+
+        return (
+          <div
+            key={colKey}
+            className={`h-10 flex items-center px-3 shrink-0 relative cursor-grab active:cursor-grabbing ${draggingColumn === colKey ? 'opacity-50 bg-blue-100' : ''}`}
+            style={{ width }}
+            draggable
+            onDragStart={(e) => handleColumnDragStart(e, colKey)}
+            onDragOver={(e) => handleColumnDragOver(e, colKey)}
+            onDragEnd={handleColumnDragEnd}
+          >
+            <ResizeHandle column={colKey} />
+            {config.sortable && config.sortField ? (
+              <button
+                onClick={() => setSecondarySort(config.sortField!)}
+                className={`flex items-center gap-1 hover:text-gray-900 transition-colors ${secondarySort.field === config.sortField ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
+              >
+                {config.icon}
+                {config.label}
+                {secondarySort.field === config.sortField && (
+                  secondarySort.direction === 'asc'
+                    ? <ChevronUp className="h-3 w-3 ml-1" />
+                    : <ChevronUp className="h-3 w-3 ml-1 rotate-180" />
+                )}
+              </button>
+            ) : (
+              <span className="flex items-center gap-1 text-gray-500">
+                {config.icon}
+                {config.label}
+              </span>
+            )}
+          </div>
+        )
+      })}
       {/* 更多操作佔位 */}
       <div className="w-12 h-10 shrink-0" />
     </div>
@@ -2819,6 +2912,7 @@ export default function TasksPage() {
                           teamMembers={teamMembers}
                           priorityConfig={priorityConfig}
                           columnWidths={columnWidths}
+                          columnOrder={columnOrder}
                           projects={projects}
                           onSubmit={(data) => handleAddTaskInGroup(key, data)}
                           onCancel={() => setAddingInGroup(null)}
@@ -2951,6 +3045,7 @@ export default function TasksPage() {
                           teamMembers={teamMembers}
                           priorityConfig={priorityConfig}
                           columnWidths={columnWidths}
+                          columnOrder={columnOrder}
                           projects={projects}
                           onSubmit={(data) => handleAddTaskInGroup(key, data)}
                           onCancel={() => setAddingInGroup(null)}
