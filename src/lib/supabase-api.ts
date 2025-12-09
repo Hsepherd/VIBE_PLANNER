@@ -602,3 +602,241 @@ export const apiUsageApi = {
     if (error) throw error
   },
 }
+
+// ============ 任務分類知識庫 API ============
+
+export interface DbCategoryMapping {
+  id: string
+  user_id: string
+  pattern: string
+  category: string
+  match_type: 'exact' | 'contains' | 'starts_with'
+  priority: number
+  created_at: string
+  updated_at: string
+}
+
+export interface DbTaskCategory {
+  id: string
+  user_id: string
+  name: string
+  color: string
+  icon: string
+  sort_order: number
+  created_at: string
+}
+
+// 預設分類（用戶沒有自訂時使用）
+export const DEFAULT_CATEGORIES: Omit<DbTaskCategory, 'id' | 'user_id' | 'created_at'>[] = [
+  { name: '銷售業務', color: '#10B981', icon: 'trending-up', sort_order: 0 },
+  { name: '內部優化', color: '#3B82F6', icon: 'settings', sort_order: 1 },
+  { name: '自我提升', color: '#8B5CF6', icon: 'sparkles', sort_order: 2 },
+  { name: '客戶服務', color: '#F59E0B', icon: 'users', sort_order: 3 },
+  { name: '行政庶務', color: '#6B7280', icon: 'briefcase', sort_order: 4 },
+  { name: '其他', color: '#9CA3AF', icon: 'circle', sort_order: 5 },
+]
+
+export const categoryMappingsApi = {
+  // 取得所有分類對應
+  async getAll(): Promise<DbCategoryMapping[]> {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('task_category_mappings')
+      .select('*')
+      .order('priority', { ascending: false })
+
+    if (error) {
+      // 表不存在時回傳空陣列
+      if (error.code === '42P01') return []
+      throw error
+    }
+    return data || []
+  },
+
+  // 新增或更新分類對應（學習功能）
+  async upsert(
+    pattern: string,
+    category: string,
+    matchType: 'exact' | 'contains' | 'starts_with' = 'exact',
+    priority: number = 0
+  ): Promise<DbCategoryMapping> {
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
+
+    const { data, error } = await supabase
+      .from('task_category_mappings')
+      .upsert(
+        {
+          user_id: userId,
+          pattern,
+          category,
+          match_type: matchType,
+          priority,
+        },
+        { onConflict: 'user_id,pattern' }
+      )
+      .select()
+      .single()
+
+    if (error) throw error
+    return data
+  },
+
+  // 批次新增（用於初始化）
+  async bulkInsert(
+    mappings: Array<{ pattern: string; category: string; matchType?: 'exact' | 'contains' | 'starts_with'; priority?: number }>
+  ): Promise<DbCategoryMapping[]> {
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
+
+    const { data, error } = await supabase
+      .from('task_category_mappings')
+      .upsert(
+        mappings.map(m => ({
+          user_id: userId,
+          pattern: m.pattern,
+          category: m.category,
+          match_type: m.matchType || 'contains',
+          priority: m.priority || 0,
+        })),
+        { onConflict: 'user_id,pattern' }
+      )
+      .select()
+
+    if (error) throw error
+    return data || []
+  },
+
+  // 刪除分類對應
+  async delete(id: string): Promise<void> {
+    const supabase = getSupabase()
+    const { error } = await supabase
+      .from('task_category_mappings')
+      .delete()
+      .eq('id', id)
+    if (error) throw error
+  },
+
+  // 根據任務標題查找分類
+  async findCategory(taskTitle: string): Promise<string | null> {
+    const mappings = await this.getAll()
+    const lowerTitle = taskTitle.toLowerCase()
+
+    // 按優先級排序後遍歷
+    for (const mapping of mappings) {
+      const pattern = mapping.pattern.toLowerCase()
+
+      switch (mapping.match_type) {
+        case 'exact':
+          if (lowerTitle === pattern) return mapping.category
+          break
+        case 'starts_with':
+          if (lowerTitle.startsWith(pattern)) return mapping.category
+          break
+        case 'contains':
+          if (lowerTitle.includes(pattern)) return mapping.category
+          break
+      }
+    }
+
+    return null
+  },
+}
+
+export const taskCategoriesApi = {
+  // 取得所有分類
+  async getAll(): Promise<DbTaskCategory[]> {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('task_categories')
+      .select('*')
+      .order('sort_order', { ascending: true })
+
+    if (error) {
+      // 表不存在時回傳空陣列
+      if (error.code === '42P01') return []
+      throw error
+    }
+    return data || []
+  },
+
+  // 初始化預設分類
+  async initializeDefaults(): Promise<DbTaskCategory[]> {
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
+
+    // 檢查是否已有分類
+    const existing = await this.getAll()
+    if (existing.length > 0) return existing
+
+    // 建立預設分類
+    const { data, error } = await supabase
+      .from('task_categories')
+      .insert(
+        DEFAULT_CATEGORIES.map(c => ({
+          ...c,
+          user_id: userId,
+        }))
+      )
+      .select()
+
+    if (error) throw error
+    return data || []
+  },
+
+  // 新增分類
+  async create(
+    name: string,
+    color: string = '#9CA3AF',
+    icon: string = 'circle'
+  ): Promise<DbTaskCategory> {
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
+
+    // 取得最大排序
+    const existing = await this.getAll()
+    const maxOrder = existing.reduce((max, c) => Math.max(max, c.sort_order), -1)
+
+    const { data, error } = await supabase
+      .from('task_categories')
+      .insert({
+        user_id: userId,
+        name,
+        color,
+        icon,
+        sort_order: maxOrder + 1,
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+    return data
+  },
+
+  // 更新分類
+  async update(
+    id: string,
+    updates: Partial<Pick<DbTaskCategory, 'name' | 'color' | 'icon' | 'sort_order'>>
+  ): Promise<DbTaskCategory> {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('task_categories')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) throw error
+    return data
+  },
+
+  // 刪除分類
+  async delete(id: string): Promise<void> {
+    const supabase = getSupabase()
+    const { error } = await supabase
+      .from('task_categories')
+      .delete()
+      .eq('id', id)
+    if (error) throw error
+  },
+}

@@ -23,6 +23,7 @@ import {
   User,
   Users,
   Shield,
+  BarChart3,
 } from 'lucide-react'
 
 // 管理員 email（與後端保持一致）
@@ -35,6 +36,7 @@ const navItems = [
   { href: '/tasks', label: '任務', icon: CheckSquare },
   { href: '/calendar', label: '行事曆', icon: Calendar },
   { href: '/projects', label: '專案', icon: FolderKanban },
+  { href: '/analytics', label: '分析', icon: BarChart3 },
 ]
 
 // 側邊欄內容元件
