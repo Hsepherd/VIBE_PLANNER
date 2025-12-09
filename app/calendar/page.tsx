@@ -308,19 +308,6 @@ export default function CalendarPage() {
     setShowNewTaskForm(true)
   }, [])
 
-  // 點擊全天區域新增全天任務
-  const handleAllDayClick = useCallback((day: Date) => {
-    const dayStart = startOfDay(day)
-    setNewTaskData({
-      title: '',
-      description: '',
-      priority: 'medium',
-      startDate: dayStart,
-      dueDate: dayStart, // 全天任務開始=結束（同一天 00:00）
-      isAllDay: true,
-    })
-    setShowNewTaskForm(true)
-  }, [])
 
   // 建立新任務
   const handleCreateTask = async () => {
@@ -829,14 +816,10 @@ export default function CalendarPage() {
                   </button>
                 )}
               </div>
-              {/* 欄位分隔線 + 點擊新增全天任務 */}
-              <div className="absolute inset-0 grid grid-cols-7">
-                {weekDays.map((day, idx) => (
-                  <div
-                    key={idx}
-                    className="border-r border-gray-200/30 last:border-r-0 cursor-pointer hover:bg-blue-50/30 transition-colors"
-                    onClick={() => handleAllDayClick(day)}
-                  />
+              {/* 欄位分隔線（極淡） */}
+              <div className="absolute inset-0 grid grid-cols-7 pointer-events-none">
+                {weekDays.map((_, idx) => (
+                  <div key={idx} className="border-r border-gray-200/30 last:border-r-0" />
                 ))}
               </div>
             </div>
@@ -1410,9 +1393,7 @@ export default function CalendarPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="p-4 border-b flex items-center justify-between">
-              <h2 className="text-lg font-semibold">
-                {newTaskData.isAllDay ? '新增全天任務' : '新增任務'}
-              </h2>
+              <h2 className="text-lg font-semibold">新增任務</h2>
               <Button
                 variant="ghost"
                 size="icon"
@@ -1475,17 +1456,10 @@ export default function CalendarPage() {
               <div className="bg-muted/50 rounded-lg p-3 space-y-2">
                 <div className="flex items-center gap-2 text-sm">
                   <CalendarIcon className="h-4 w-4 text-muted-foreground" />
-                  {newTaskData.isAllDay ? (
-                    <span>
-                      {newTaskData.startDate && format(newTaskData.startDate, 'yyyy/MM/dd (EEE)', { locale: zhTW })}
-                      {' '}全天
-                    </span>
-                  ) : (
-                    <span>
-                      {newTaskData.startDate && format(newTaskData.startDate, 'yyyy/MM/dd HH:mm', { locale: zhTW })}
-                      {newTaskData.dueDate && ` ~ ${format(newTaskData.dueDate, 'HH:mm')}`}
-                    </span>
-                  )}
+                  <span>
+                    {newTaskData.startDate && format(newTaskData.startDate, 'yyyy/MM/dd HH:mm', { locale: zhTW })}
+                    {newTaskData.dueDate && ` ~ ${format(newTaskData.dueDate, 'HH:mm')}`}
+                  </span>
                 </div>
               </div>
 

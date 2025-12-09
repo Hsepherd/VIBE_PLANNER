@@ -1591,7 +1591,7 @@ export default function TasksPage() {
   // 在分類中新增任務（接受來自 AddTaskRow 的數據）
   const handleAddTaskInGroup = async (
     groupKey: string,
-    data: { title: string; assignee?: string; startDate?: Date; dueDate?: Date; priority: Task['priority'] }
+    data: { title: string; assignee?: string; startDate?: Date; dueDate?: Date; priority: Task['priority']; projectId?: string }
   ) => {
     if (!data.title.trim()) return
     try {
@@ -1602,6 +1602,7 @@ export default function TasksPage() {
         assignee: data.assignee,
         startDate: data.startDate,
         dueDate: data.dueDate,
+        projectId: data.projectId,
       }
 
       // 根據目前的分類模式設定預設值（如果用戶沒有手動選擇）
@@ -1890,6 +1891,7 @@ export default function TasksPage() {
     startDate: 110,
     dueDate: 110,
     priority: 80,
+    project: 100,
   })
 
   // 拖曳調整欄位寬度
@@ -2263,6 +2265,28 @@ export default function TasksPage() {
           </DropdownMenu>
         </div>
 
+        {/* 專案欄位 - 動態寬度 */}
+        <div className="h-12 flex items-center shrink-0" style={{ width: columnWidths.project }}>
+          <DropdownMenu open={projectOpen} onOpenChange={setProjectOpen}>
+            <DropdownMenuTrigger asChild>
+              <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
+                <FolderKanban className="h-4 w-4 shrink-0 text-violet-500" />
+                <span className="flex-1 text-left truncate">{getProjectName(task.projectId) || '-'}</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-40">
+              {projects.filter(p => p.status === 'active').map((project) => (
+                <DropdownMenuItem key={project.id} onClick={() => handleUpdateTask(task.id, { projectId: project.id })} className="text-xs">
+                  <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />{project.name}
+                  {task.projectId === project.id && <Check className="h-3 w-3 ml-auto" />}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { projectId: undefined })}>清除專案</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
         {/* 更多操作 - 固定寬度 */}
         <div className="w-12 h-12 flex items-center justify-center shrink-0">
           <DropdownMenu>
@@ -2366,8 +2390,9 @@ export default function TasksPage() {
     groupKey: string
     teamMembers: string[]
     priorityConfig: PriorityConfig
-    columnWidths: { assignee: number; startDate: number; dueDate: number; priority: number }
-    onSubmit: (data: { title: string; assignee?: string; startDate?: Date; dueDate?: Date; priority: Task['priority'] }) => void
+    columnWidths: { assignee: number; startDate: number; dueDate: number; priority: number; project: number }
+    projects: Project[]
+    onSubmit: (data: { title: string; assignee?: string; startDate?: Date; dueDate?: Date; priority: Task['priority']; projectId?: string }) => void
     onCancel: () => void
   }) => {
     // 所有狀態內部管理，避免輸入時觸發父組件 re-render
@@ -2376,10 +2401,12 @@ export default function TasksPage() {
     const [startDate, setStartDate] = useState<Date | undefined>(undefined)
     const [dueDate, setDueDate] = useState<Date | undefined>(undefined)
     const [priority, setPriority] = useState<Task['priority']>('medium')
+    const [projectId, setProjectId] = useState<string | undefined>(undefined)
     const [assigneeOpen, setAssigneeOpen] = useState(false)
     const [startDateOpen, setStartDateOpen] = useState(false)
     const [dueDateOpen, setDueDateOpen] = useState(false)
     const [priorityOpen, setPriorityOpen] = useState(false)
+    const [projectPickerOpen, setProjectPickerOpen] = useState(false)
     const inputRef = useRef<HTMLInputElement>(null)
 
     useEffect(() => {
@@ -2394,7 +2421,7 @@ export default function TasksPage() {
 
     const handleSubmit = () => {
       if (!title.trim()) return
-      onSubmit({ title: title.trim(), assignee, startDate, dueDate, priority })
+      onSubmit({ title: title.trim(), assignee, startDate, dueDate, priority, projectId })
     }
 
     return (
@@ -2514,6 +2541,32 @@ export default function TasksPage() {
                   {priority === key && <Check className="h-3 w-3 ml-auto" />}
                 </DropdownMenuItem>
               ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* 專案選擇 */}
+        <div className="h-11 flex items-center shrink-0" style={{ width: columnWidths.project }}>
+          <DropdownMenu open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
+            <DropdownMenuTrigger asChild>
+              <button className="inline-flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-white/60 transition-colors w-full h-full text-gray-500">
+                <FolderKanban className="h-4 w-4 shrink-0 text-violet-500" />
+                <span className="flex-1 text-left truncate">{projects.find(p => p.id === projectId)?.name || '-'}</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-40">
+              {projects.filter(p => p.status === 'active').map((project) => (
+                <DropdownMenuItem key={project.id} onClick={() => setProjectId(project.id)} className="text-xs">
+                  <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />{project.name}
+                  {projectId === project.id && <Check className="h-3 w-3 ml-auto" />}
+                </DropdownMenuItem>
+              ))}
+              {projectId && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-xs text-gray-500" onClick={() => setProjectId(undefined)}>清除專案</DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -2673,6 +2726,14 @@ export default function TasksPage() {
           )}
         </button>
       </div>
+      {/* 專案 - 可調整寬度 */}
+      <div className="h-10 flex items-center px-3 shrink-0 relative" style={{ width: columnWidths.project }}>
+        <ResizeHandle column="project" />
+        <span className="flex items-center gap-1 text-gray-500">
+          <FolderKanban className="h-4 w-4 shrink-0 mr-1" />
+          專案
+        </span>
+      </div>
       {/* 更多操作佔位 */}
       <div className="w-12 h-10 shrink-0" />
     </div>
@@ -2737,6 +2798,7 @@ export default function TasksPage() {
                           teamMembers={teamMembers}
                           priorityConfig={priorityConfig}
                           columnWidths={columnWidths}
+                          projects={projects}
                           onSubmit={(data) => handleAddTaskInGroup(key, data)}
                           onCancel={() => setAddingInGroup(null)}
                         />
@@ -2868,6 +2930,7 @@ export default function TasksPage() {
                           teamMembers={teamMembers}
                           priorityConfig={priorityConfig}
                           columnWidths={columnWidths}
+                          projects={projects}
                           onSubmit={(data) => handleAddTaskInGroup(key, data)}
                           onCancel={() => setAddingInGroup(null)}
                         />
