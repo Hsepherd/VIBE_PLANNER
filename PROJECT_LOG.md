@@ -4,6 +4,60 @@
 
 ---
 
+## 2025-12-09
+
+### 📊 Analytics 頁面 + AI 智能任務分類
+
+**事件**：實作 Todoist 風格的 Analytics 頁面，並加入 AI 智能任務分類功能
+
+**新增功能**：
+
+1. **Analytics 頁面**
+   - 每日/每週完成統計與切換
+   - 趨勢長條圖（顯示最近 7 天/4 週完成數）
+   - 類別分布圓餅圖
+   - 專案分布視覺化（色塊 + 圖例說明）
+   - 連續達成天數（Streak）統計
+   - 時間追蹤統計（依類別顯示時數）
+
+2. **AI 智能任務分類系統**
+   - 六大分類：銷售業務、內部優化、自我提升、客戶服務、行政庶務、其他
+   - AI 關鍵字權重匹配（每個類別有專屬關鍵字和權重）
+   - 知識庫學習機制（用戶修正後自動記住）
+   - 分類優先級：知識庫優先，AI 輔助
+
+3. **分類修正 UI**
+   - 任務旁的分類標籤可點擊修正
+   - Popover 選單顯示所有分類選項
+   - 修正後即時學習並更新顯示
+   - 底部顯示「已學習 X 個分類規則」
+
+**新增檔案**：
+- `app/analytics/page.tsx` - Analytics 頁面主元件
+- `src/lib/useCategoryMappings.ts` - 分類 Hook（含 AI 分類邏輯）
+- `supabase/migrations/20251209_task_categories.sql` - 知識庫資料表
+
+**修改檔案**：
+- `src/lib/supabase-api.ts` - 新增 categoryMappingsApi、taskCategoriesApi
+- `src/components/layout/Sidebar.tsx` - 新增 Analytics 導航連結
+
+**技術細節**：
+| 項目 | 實作方式 |
+|-----|---------|
+| AI 分類 | 關鍵字匹配 + 權重計算，信心度最高者勝出 |
+| 知識庫 | task_category_mappings 表，支援 exact/contains/starts_with 匹配 |
+| 學習機制 | upsert 操作，同 pattern 自動覆蓋 |
+| 圓餅圖 | recharts PieChart 元件 |
+| 時間統計 | 根據任務 startDate/dueDate 計算時長 |
+
+**分類邏輯**：
+1. 先查知識庫（cachedMappings），按優先級排序
+2. 知識庫無匹配時，使用 AI 智能分類（aiClassify）
+3. AI 分類根據關鍵字數量 × 權重計算信心度
+4. 用戶修正時調用 learnCategory，寫入知識庫
+
+---
+
 ## 2025-12-06
 
 ### ✏️ 任務更新功能優化
