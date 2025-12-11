@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -20,14 +20,27 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   const [feedback, setFeedback] = useState<'positive' | 'negative' | null>(null)
 
   // 取得顯示的訊息內容（移除 JSON 部分）
-  const getDisplayContent = () => {
-    return message.content.replace(/```json[\s\S]*?```/g, '').trim()
-  }
+  // 使用 useMemo 避免每次 render 都重新計算，並處理超長內容
+  const displayContent = useMemo(() => {
+    if (!message.content) return ''
+    try {
+      // 移除 JSON 區塊
+      let content = message.content.replace(/```json[\s\S]*?```/g, '').trim()
+      // 如果內容為空，返回原始內容（可能是純 JSON 回應）
+      if (!content && message.content.trim()) {
+        content = message.content.trim()
+      }
+      return content
+    } catch {
+      // 如果 regex 處理失敗，返回原始內容
+      return message.content || ''
+    }
+  }, [message.content])
 
   // 複製訊息
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(getDisplayContent())
+      await navigator.clipboard.writeText(displayContent)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (err) {
@@ -80,7 +93,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
               : 'bg-muted'
           }`}
         >
-          <p className="text-sm whitespace-pre-wrap">{getDisplayContent()}</p>
+          <p className="text-sm whitespace-pre-wrap break-words">{displayContent}</p>
 
           {/* 顯示圖片 */}
           {message.metadata?.imageUrl && (

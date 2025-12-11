@@ -11,6 +11,7 @@ export interface Task {
   id: string
   title: string
   description?: string
+  notes?: string  // 備註欄位
   status: 'pending' | 'in_progress' | 'completed' | 'on_hold'
   priority: 'low' | 'medium' | 'high' | 'urgent'
   startDate?: Date  // 開始日期
@@ -36,6 +37,7 @@ function dbTaskToTask(dbTask: DbTask): Task {
     id: dbTask.id,
     title: dbTask.title,
     description: dbTask.description || undefined,
+    notes: dbTask.notes || undefined,
     status: dbTask.status,
     priority: dbTask.priority,
     startDate: dbTask.start_date ? new Date(dbTask.start_date) : undefined,
@@ -89,6 +91,7 @@ export function useSupabaseTasks() {
       const dbTask = await tasksApi.create({
         title: task.title,
         description: task.description || null,
+        notes: task.notes || null,
         status: task.status,
         priority: task.priority,
         start_date: task.startDate ? task.startDate.toISOString() : null,
@@ -139,6 +142,7 @@ export function useSupabaseTasks() {
       // 使用 'key' in object 來檢測是否有傳入該欄位（即使值是 undefined）
       if ('title' in updates) dbUpdates.title = updates.title!
       if ('description' in updates) dbUpdates.description = updates.description || null
+      if ('notes' in updates) dbUpdates.notes = updates.notes || null
       if ('status' in updates) dbUpdates.status = updates.status!
       if ('priority' in updates) dbUpdates.priority = updates.priority!
       if ('startDate' in updates) dbUpdates.start_date = updates.startDate ? updates.startDate.toISOString() : null

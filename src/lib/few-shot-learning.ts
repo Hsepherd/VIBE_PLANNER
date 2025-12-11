@@ -177,11 +177,22 @@ export async function learnFromUserReply(
 
   // 檢測是否包含指令性語句
   const instructionPatterns = [
-    { pattern: /標題.*(太長|太短|要.*精簡|要.*詳細)/i, type: 'style' },
+    // 風格相關
+    { pattern: /標題.*(太長|太短|要.*精簡|要.*詳細|比較.*易懂)/i, type: 'style' },
+    { pattern: /(仿照|參考|學習|照著).*(方式|風格|格式|做法)/i, type: 'style' },
+    { pattern: /(產生|萃取|建立).*(都|要|應該).*(仿照|參考|學習)/i, type: 'style' },
+    // 過濾相關
     { pattern: /(不要|不用).*(萃取|加入|包含)/i, type: 'filter' },
-    { pattern: /(要|應該|記得).*(加入|包含|寫出)/i, type: 'content' },
     { pattern: /(這類|這種|這樣的).*(不算|不是|跳過)/i, type: 'filter' },
+    // 內容相關
+    { pattern: /(要|應該|記得).*(加入|包含|寫出|新增)/i, type: 'content' },
+    { pattern: /(沒有|缺少|漏掉).*(產出|萃取|加入)/i, type: 'content' },
+    { pattern: /(差異|不同|區別).*(在|是)/i, type: 'content' },
+    // 優先級相關
     { pattern: /(比較|更).*(重要|緊急|優先)/i, type: 'priority' },
+    // 學習/知識庫相關
+    { pattern: /(補強|更新|優化|改進).*(知識庫|學習|記憶)/i, type: 'other' },
+    { pattern: /(學習|記住|記得).*(這個|這種|這類)/i, type: 'other' },
     { pattern: /(下次|以後|之後).*(記得|要|不要)/i, type: 'other' },
   ]
 

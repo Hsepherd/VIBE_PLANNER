@@ -38,6 +38,7 @@ export interface DbTask {
   id: string
   title: string
   description: string | null
+  notes: string | null  // 備註欄位
   status: 'pending' | 'in_progress' | 'completed' | 'on_hold'
   priority: 'low' | 'medium' | 'high' | 'urgent'
   start_date: string | null

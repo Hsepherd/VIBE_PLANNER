@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useSupabaseTasks, type Task } from '@/lib/useSupabaseTasks'
+import { useSupabaseProjects, type Project } from '@/lib/useSupabaseProjects'
 import { useSwipeable } from 'react-swipeable'
 import {
   format,
@@ -54,16 +55,84 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { TaskDetailDialog } from '@/components/task/TaskDetailDialog'
+import { getTeamMembers, addTeamMember, removeTeamMember } from '@/lib/team-members'
+import { getTags, addTag, removeTag, type Tag } from '@/lib/tags'
+import { getGroups, addGroup, removeGroup, type Group } from '@/lib/groups'
 
 type ViewMode = 'day' | 'week' | 'month'
 
 export default function CalendarPage() {
-  const { tasks, isLoading, updateTask: updateSupabaseTask, addTask } = useSupabaseTasks()
+  const { tasks, isLoading, updateTask: updateSupabaseTask, addTask, completeTask } = useSupabaseTasks()
+  const { projects, addProject: addProjectToDb } = useSupabaseProjects()
 
   const [currentDate, setCurrentDate] = useState(new Date())
   const [viewMode, setViewMode] = useState<ViewMode>('week')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [expandedAllDay, setExpandedAllDay] = useState(false) // 全天區域是否展開
+
+  // 團隊成員
+  const [teamMembers, setTeamMembers] = useState<string[]>([])
+  useEffect(() => {
+    setTeamMembers(getTeamMembers())
+  }, [])
+
+  const handleAddMember = useCallback((name: string) => {
+    const updated = addTeamMember(name)
+    setTeamMembers(updated)
+  }, [])
+
+  const handleRemoveMember = useCallback((name: string) => {
+    const updated = removeTeamMember(name)
+    setTeamMembers(updated)
+  }, [])
+
+  // 標籤
+  const [availableTags, setAvailableTags] = useState<Tag[]>([])
+  useEffect(() => {
+    setAvailableTags(getTags())
+  }, [])
+
+  const handleAddTag = useCallback((name: string, color: string) => {
+    const updated = addTag(name, color)
+    setAvailableTags(updated)
+  }, [])
+
+  const handleRemoveTag = useCallback((name: string) => {
+    const updated = removeTag(name)
+    setAvailableTags(updated)
+  }, [])
+
+  // 組別
+  const [availableGroups, setAvailableGroups] = useState<Group[]>([])
+  useEffect(() => {
+    setAvailableGroups(getGroups())
+  }, [])
+
+  const handleAddGroup = useCallback((name: string, color: string) => {
+    const updated = addGroup(name, color)
+    setAvailableGroups(updated)
+  }, [])
+
+  const handleRemoveGroup = useCallback((name: string) => {
+    const updated = removeGroup(name)
+    setAvailableGroups(updated)
+  }, [])
+
+  // 新增專案（從任務詳情彈窗）
+  const handleAddProject = useCallback(async (name: string): Promise<Project | null> => {
+    try {
+      const newProject = await addProjectToDb({
+        name,
+        status: 'active',
+        progress: 0,
+      })
+      return newProject
+    } catch (err) {
+      console.error('新增專案失敗:', err)
+      return null
+    }
+  }, [addProjectToDb])
 
   // 新增任務彈窗狀態
   const [showNewTaskForm, setShowNewTaskForm] = useState(false)
@@ -1490,152 +1559,24 @@ export default function CalendarPage() {
         </div>
       )}
 
-      {/* 任務詳情側邊欄 */}
-      {selectedTask && (
-        <div
-          className="fixed inset-0 z-50 bg-black/50"
-          onClick={() => setSelectedTask(null)}
-        >
-          <div
-            className="absolute right-0 top-0 bottom-0 w-96 bg-background shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-6 border-b flex items-center justify-between">
-              <h2 className="text-lg font-semibold">任務詳情</h2>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setSelectedTask(null)}
-              >
-                ✕
-              </Button>
-            </div>
-            <div className="p-6 space-y-4">
-              {/* 完成狀態 */}
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => toggleTaskComplete(selectedTask)}
-                  className={`
-                    w-6 h-6 rounded-full border-2 flex items-center justify-center
-                    ${selectedTask.status === 'completed'
-                      ? 'bg-green-500 border-green-500 text-white'
-                      : 'border-gray-400 hover:border-primary'}
-                  `}
-                >
-                  {selectedTask.status === 'completed' && <Check className="h-4 w-4" />}
-                </button>
-                <span
-                  className={`text-xl font-medium ${selectedTask.status === 'completed' ? 'line-through text-muted-foreground' : ''}`}
-                >
-                  {selectedTask.title}
-                </span>
-              </div>
-
-              {/* 詳細資訊 */}
-              <div className="space-y-3 pt-4 border-t">
-                {/* 優先級 */}
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground w-20">優先級</span>
-                  <Badge
-                    variant={
-                      selectedTask.priority === 'urgent'
-                        ? 'destructive'
-                        : selectedTask.priority === 'high'
-                        ? 'default'
-                        : 'secondary'
-                    }
-                  >
-                    {selectedTask.priority === 'urgent' ? '緊急' :
-                     selectedTask.priority === 'high' ? '高' :
-                     selectedTask.priority === 'medium' ? '中' : '低'}
-                  </Badge>
-                </div>
-
-                {/* 開始日期 */}
-                {selectedTask.startDate && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground w-20">開始時間</span>
-                    <span className="text-sm">
-                      {format(new Date(selectedTask.startDate), 'yyyy/MM/dd HH:mm', { locale: zhTW })}
-                    </span>
-                  </div>
-                )}
-
-                {/* 截止日期 */}
-                {selectedTask.dueDate && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground w-20">截止時間</span>
-                    <span className="text-sm">
-                      {format(new Date(selectedTask.dueDate), 'yyyy/MM/dd HH:mm', { locale: zhTW })}
-                    </span>
-                  </div>
-                )}
-
-                {/* 時長 */}
-                {selectedTask.startDate && selectedTask.dueDate && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground w-20">時長</span>
-                    <span className="text-sm">
-                      {(() => {
-                        const minutes = differenceInMinutes(new Date(selectedTask.dueDate), new Date(selectedTask.startDate))
-                        const hours = Math.floor(minutes / 60)
-                        const mins = minutes % 60
-                        if (hours > 0 && mins > 0) return `${hours} 小時 ${mins} 分鐘`
-                        if (hours > 0) return `${hours} 小時`
-                        return `${mins} 分鐘`
-                      })()}
-                    </span>
-                  </div>
-                )}
-
-                {/* 負責人 */}
-                {selectedTask.assignee && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground w-20">負責人</span>
-                    <span className="text-sm flex items-center gap-1">
-                      <User className="h-4 w-4" />
-                      {selectedTask.assignee}
-                    </span>
-                  </div>
-                )}
-
-                {/* 專案 */}
-                {selectedTask.project && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground w-20">專案</span>
-                    <span className="text-sm flex items-center gap-1">
-                      <FolderKanban className="h-4 w-4" />
-                      {selectedTask.project}
-                    </span>
-                  </div>
-                )}
-
-                {/* 描述 */}
-                {selectedTask.description && (
-                  <div className="pt-3 border-t">
-                    <span className="text-sm text-muted-foreground block mb-2">描述</span>
-                    <p className="text-sm whitespace-pre-wrap">{selectedTask.description}</p>
-                  </div>
-                )}
-              </div>
-
-              {/* 操作按鈕 */}
-              <div className="pt-4 border-t flex gap-2">
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => {
-                    toggleTaskComplete(selectedTask)
-                    setSelectedTask(null)
-                  }}
-                >
-                  {selectedTask.status === 'completed' ? '標記未完成' : '標記完成'}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 任務詳情彈窗 - 與任務列表共用 */}
+      <TaskDetailDialog
+        task={selectedTask}
+        onClose={() => setSelectedTask(null)}
+        onUpdate={async (id, updates) => { await updateSupabaseTask(id, updates) }}
+        onComplete={completeTask}
+        teamMembers={teamMembers}
+        onAddMember={handleAddMember}
+        onRemoveMember={handleRemoveMember}
+        availableTags={availableTags}
+        onAddTag={handleAddTag}
+        onRemoveTag={handleRemoveTag}
+        availableGroups={availableGroups}
+        onAddGroup={handleAddGroup}
+        onRemoveGroup={handleRemoveGroup}
+        projects={projects}
+        onAddProject={handleAddProject}
+      />
     </div>
   )
 }
