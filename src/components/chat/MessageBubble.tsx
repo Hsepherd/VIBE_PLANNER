@@ -24,15 +24,40 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   const displayContent = useMemo(() => {
     if (!message.content) return ''
     try {
-      // 移除 JSON 區塊
+      // 移除 ```json...``` 區塊
       let content = message.content.replace(/```json[\s\S]*?```/g, '').trim()
-      // 如果內容為空，返回原始內容（可能是純 JSON 回應）
+
+      // 如果內容為空，檢查是否為純 JSON 回應
       if (!content && message.content.trim()) {
-        content = message.content.trim()
+        const trimmed = message.content.trim()
+        // 檢查是否為 JSON 物件（以 { 開頭）
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+          try {
+            const parsed = JSON.parse(trimmed)
+            // 如果是已知的結構化回應類型，顯示友善訊息
+            if (parsed.type === 'tasks_extracted' && parsed.tasks) {
+              return parsed.message || `📋 萃取了 ${parsed.tasks.length} 個任務`
+            } else if (parsed.type === 'task_search' && parsed.matched_tasks) {
+              return parsed.message || `🔍 找到 ${parsed.matched_tasks.length} 個匹配任務`
+            } else if (parsed.type === 'task_categorization') {
+              return parsed.message || '📂 任務分類建議'
+            } else if (parsed.type === 'task_update') {
+              return parsed.message || '✏️ 任務更新'
+            } else if (parsed.type === 'chat' && parsed.message) {
+              return parsed.message
+            }
+            // 未知 JSON 類型，返回 message 或原始內容
+            return parsed.message || trimmed
+          } catch {
+            // JSON 解析失敗，返回原始內容
+            return trimmed
+          }
+        }
+        content = trimmed
       }
       return content
     } catch {
-      // 如果 regex 處理失敗，返回原始內容
+      // 如果處理失敗，返回原始內容
       return message.content || ''
     }
   }, [message.content])

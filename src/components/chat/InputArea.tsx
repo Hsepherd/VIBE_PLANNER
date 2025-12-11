@@ -262,19 +262,33 @@ export default function InputArea() {
                 // 而不是只顯示 JSON 內的 message 欄位
                 let messageContent = fullContent
 
-                // 如果完整內容包含 JSON 區塊，移除它以便顯示更乾淨的訊息
-                // 但如果 JSON 內的 message 足夠詳細，也可以使用它
-                if (parsed.type === 'tasks_extracted' && fullContent.includes('```json')) {
-                  // 保留 JSON 區塊前的 Markdown 內容作為訊息
-                  const jsonStart = fullContent.indexOf('```json')
-                  if (jsonStart > 50) {
-                    // 有足夠的 Markdown 內容在 JSON 前面
-                    messageContent = fullContent.slice(0, jsonStart).trim()
-                  } else if (parsed.message && parsed.message.length > 50) {
-                    // JSON 內的 message 夠詳細
-                    messageContent = parsed.message
+                // 處理 JSON 回應：可能是 ```json...``` 格式，也可能是純 JSON
+                if (parsed.type === 'tasks_extracted' || parsed.type === 'task_search' || parsed.type === 'task_categorization' || parsed.type === 'task_update') {
+                  if (fullContent.includes('```json')) {
+                    // 有 code block 的情況：保留 JSON 區塊前的 Markdown 內容
+                    const jsonStart = fullContent.indexOf('```json')
+                    if (jsonStart > 50) {
+                      messageContent = fullContent.slice(0, jsonStart).trim()
+                    } else if (parsed.message && parsed.message.length > 50) {
+                      messageContent = parsed.message
+                    }
+                  } else {
+                    // 純 JSON 回應（沒有 code block）：使用 message 欄位
+                    // 如果 message 太短或不存在，生成友善的提示訊息
+                    if (parsed.message && parsed.message.length > 20) {
+                      messageContent = parsed.message
+                    } else if (parsed.type === 'tasks_extracted' && parsed.tasks && parsed.tasks.length > 0) {
+                      messageContent = `📋 我從內容中萃取了 ${parsed.tasks.length} 個任務，請確認是否要加入：`
+                    } else if (parsed.type === 'task_search' && parsed.matched_tasks && parsed.matched_tasks.length > 0) {
+                      messageContent = `🔍 找到 ${parsed.matched_tasks.length} 個匹配的任務，請選擇要更新哪一個：`
+                    } else if (parsed.type === 'task_categorization') {
+                      messageContent = `📂 以下是任務分類建議：`
+                    } else if (parsed.type === 'task_update') {
+                      messageContent = `✏️ 準備更新任務，請確認：`
+                    } else {
+                      messageContent = parsed.message || '處理完成'
+                    }
                   }
-                  // 否則保留完整內容
                 }
 
                 console.log('[InputArea] 最終訊息長度:', messageContent.length)
@@ -486,12 +500,25 @@ export default function InputArea() {
           console.log('[InputArea] Fallback 解析結果 type:', parsed.type)
           console.log('[InputArea] Fallback 解析結果 tasks 數量:', parsed.tasks?.length || 0)
 
-          // 決定訊息內容
+          // 決定訊息內容（與主邏輯相同）
           let messageContent = fullContent
-          if (parsed.type === 'tasks_extracted' && fullContent.includes('```json')) {
-            const jsonStart = fullContent.indexOf('```json')
-            if (jsonStart > 50) {
-              messageContent = fullContent.slice(0, jsonStart).trim()
+          if (parsed.type === 'tasks_extracted' || parsed.type === 'task_search' || parsed.type === 'task_categorization' || parsed.type === 'task_update') {
+            if (fullContent.includes('```json')) {
+              const jsonStart = fullContent.indexOf('```json')
+              if (jsonStart > 50) {
+                messageContent = fullContent.slice(0, jsonStart).trim()
+              } else if (parsed.message && parsed.message.length > 50) {
+                messageContent = parsed.message
+              }
+            } else {
+              // 純 JSON 回應
+              if (parsed.message && parsed.message.length > 20) {
+                messageContent = parsed.message
+              } else if (parsed.type === 'tasks_extracted' && parsed.tasks && parsed.tasks.length > 0) {
+                messageContent = `📋 我從內容中萃取了 ${parsed.tasks.length} 個任務，請確認是否要加入：`
+              } else {
+                messageContent = parsed.message || '處理完成'
+              }
             }
           }
 
