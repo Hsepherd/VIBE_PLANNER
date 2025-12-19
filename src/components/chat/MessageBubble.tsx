@@ -24,38 +24,62 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   const displayContent = useMemo(() => {
     if (!message.content) return ''
     try {
-      // 移除 ```json...``` 區塊
+      const trimmed = message.content.trim()
+
+      // 嘗試解析 JSON 回應
+      const tryParseAndExtractMessage = (jsonStr: string): string | null => {
+        try {
+          const parsed = JSON.parse(jsonStr)
+          // 如果是已知的結構化回應類型，顯示友善訊息
+          if (parsed.type === 'tasks_extracted' && parsed.tasks) {
+            return parsed.message || `📋 萃取了 ${parsed.tasks.length} 個任務`
+          } else if (parsed.type === 'task_search' && parsed.matched_tasks) {
+            return parsed.message || `🔍 找到 ${parsed.matched_tasks.length} 個匹配任務`
+          } else if (parsed.type === 'task_categorization') {
+            return parsed.message || '📂 任務分類建議'
+          } else if (parsed.type === 'task_update') {
+            return parsed.message || '✏️ 任務更新'
+          } else if (parsed.type === 'chat' && parsed.message) {
+            return parsed.message
+          }
+          // 未知 JSON 類型，返回 message 或 null
+          return parsed.message || null
+        } catch {
+          return null
+        }
+      }
+
+      // 情況 1: 以 ```json 開頭（有或沒有結尾的 ```）
+      if (trimmed.startsWith('```json')) {
+        // 嘗試提取 JSON 內容
+        const withClosing = trimmed.match(/```json\n?([\s\S]*?)\n?```/)
+        if (withClosing) {
+          const result = tryParseAndExtractMessage(withClosing[1])
+          if (result) return result
+        }
+
+        // 沒有正確關閉的情況：移除開頭的 ```json 和結尾的 ```（如果有）
+        let jsonContent = trimmed.replace(/^```json\n?/, '').replace(/\n?```$/, '')
+        const result = tryParseAndExtractMessage(jsonContent)
+        if (result) return result
+      }
+
+      // 情況 2: 移除 ```json...``` 區塊後檢查剩餘內容
       let content = message.content.replace(/```json[\s\S]*?```/g, '').trim()
 
-      // 如果內容為空，檢查是否為純 JSON 回應
-      if (!content && message.content.trim()) {
-        const trimmed = message.content.trim()
+      // 情況 3: 如果移除後為空，檢查是否為純 JSON 回應
+      if (!content && trimmed) {
         // 檢查是否為 JSON 物件（以 { 開頭）
-        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-          try {
-            const parsed = JSON.parse(trimmed)
-            // 如果是已知的結構化回應類型，顯示友善訊息
-            if (parsed.type === 'tasks_extracted' && parsed.tasks) {
-              return parsed.message || `📋 萃取了 ${parsed.tasks.length} 個任務`
-            } else if (parsed.type === 'task_search' && parsed.matched_tasks) {
-              return parsed.message || `🔍 找到 ${parsed.matched_tasks.length} 個匹配任務`
-            } else if (parsed.type === 'task_categorization') {
-              return parsed.message || '📂 任務分類建議'
-            } else if (parsed.type === 'task_update') {
-              return parsed.message || '✏️ 任務更新'
-            } else if (parsed.type === 'chat' && parsed.message) {
-              return parsed.message
-            }
-            // 未知 JSON 類型，返回 message 或原始內容
-            return parsed.message || trimmed
-          } catch {
-            // JSON 解析失敗，返回原始內容
-            return trimmed
-          }
+        if (trimmed.startsWith('{')) {
+          const result = tryParseAndExtractMessage(trimmed)
+          if (result) return result
+          // JSON 解析失敗，返回原始內容
+          return trimmed
         }
         content = trimmed
       }
-      return content
+
+      return content || trimmed
     } catch {
       // 如果處理失敗，返回原始內容
       return message.content || ''
