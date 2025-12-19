@@ -421,9 +421,16 @@ export default function CalendarPage() {
     e.preventDefault()
     e.stopPropagation()
 
-    // 確保有開始和結束時間才能操作
-    const startTime = task.startDate ? new Date(task.startDate) : null
-    const endTime = task.dueDate ? new Date(task.dueDate) : null
+    // 取得時間，如果只有 dueDate，就用 dueDate 作為 startTime
+    let startTime = task.startDate ? new Date(task.startDate) : null
+    let endTime = task.dueDate ? new Date(task.dueDate) : null
+
+    // 如果只有 dueDate 沒有 startDate，將 dueDate 當作開始時間（允許移動）
+    if (!startTime && endTime) {
+      startTime = endTime
+      // 預設結束時間為開始後 1 小時
+      endTime = addMinutes(startTime, 60)
+    }
 
     // resize 模式需要有開始時間（結束時間可以自動設定）
     if (mode === 'resize' && !startTime) {
@@ -437,12 +444,16 @@ export default function CalendarPage() {
       return
     }
 
-    setDraggingTask(task)
+    setDraggingTask({
+      ...task,
+      startDate: startTime || undefined,
+      dueDate: endTime || (startTime ? addMinutes(startTime, 60) : undefined),
+    })
     setDragMode(mode)
     setDragStartY(e.clientY)
     setDragStartX(e.clientX)
     setDragStartTime(startTime)
-    setDragEndTime(endTime)
+    setDragEndTime(endTime || (startTime ? addMinutes(startTime, 60) : null))
     setHasDragged(false) // 重置拖曳標記
     setDragStartDayIndex(dayIndex)
   }, [])
@@ -919,12 +930,16 @@ export default function CalendarPage() {
                 const isTodayDate = isToday(day)
 
                 // 取得這天的「單日時間任務」（有時間且同一天結束）
+                // 注意：如果有拖曳中的任務，使用拖曳後的位置來判斷
                 const timedTasks = tasks.filter((task: Task) => {
-                  // 只顯示單日時間任務
-                  if (!isSingleDayTimedTask(task)) return false
+                  // 如果是正在拖曳的任務，使用拖曳後的位置判斷
+                  const currentTask = draggingTask?.id === task.id ? draggingTask : task
 
-                  const taskStart = task.startDate ? new Date(task.startDate) : null
-                  const taskEnd = task.dueDate ? new Date(task.dueDate) : null
+                  // 只顯示單日時間任務
+                  if (!isSingleDayTimedTask(currentTask)) return false
+
+                  const taskStart = currentTask.startDate ? new Date(currentTask.startDate) : null
+                  const taskEnd = currentTask.dueDate ? new Date(currentTask.dueDate) : null
 
                   if (taskStart && isSameDay(taskStart, day)) return true
                   if (taskEnd && isSameDay(taskEnd, day)) return true
@@ -1028,11 +1043,12 @@ export default function CalendarPage() {
 
                     {/* 有時間的任務 */}
                     {timedTasks.map((task) => {
-                      // 如果這個任務正在被拖曳，跳過（會在下面單獨渲染）
-                      if (draggingTask?.id === task.id) return null
+                      // 使用拖曳中的位置（如果正在拖曳這個任務）
+                      const displayTask = draggingTask?.id === task.id ? draggingTask : task
+                      const isDragging = draggingTask?.id === task.id
 
-                      const taskStart = task.startDate ? new Date(task.startDate) : null
-                      const taskEnd = task.dueDate ? new Date(task.dueDate) : null
+                      const taskStart = displayTask.startDate ? new Date(displayTask.startDate) : null
+                      const taskEnd = displayTask.dueDate ? new Date(displayTask.dueDate) : null
 
                       let displayTime: Date
                       let endTime: Date | null = null
@@ -1068,7 +1084,7 @@ export default function CalendarPage() {
                         height = Math.max(24, (durationMinutes / 60) * 56 - 4)
                       }
 
-                      const colors = getTaskBarStyle(task)
+                      const colors = getTaskBarStyle(displayTask)
 
                       // 取得並排位置
                       const layout = taskLayout.get(task.id) || { column: 0, totalColumns: 1 }
@@ -1082,24 +1098,23 @@ export default function CalendarPage() {
                             absolute rounded-md px-1 py-1 text-xs
                             overflow-hidden select-none
                             ${colors.bg} ${colors.text}
-                            ${task.status === 'completed' ? 'opacity-50' : ''}
-                            cursor-grab hover:brightness-95 hover:shadow-md
+                            ${displayTask.status === 'completed' ? 'opacity-50' : ''}
+                            ${isDragging ? 'shadow-lg ring-2 ring-primary cursor-grabbing z-30' : 'cursor-grab hover:brightness-95 hover:shadow-md z-5'}
                           `}
                           style={{
                             top: `${topOffset}px`,
                             height: `${height}px`,
                             left: `calc(${leftOffset}% + 2px)`,
                             width: `calc(${columnWidth}% - 4px)`,
-                            zIndex: 5,
                           }}
                           onMouseDown={(e) => handleDragStart(e, task, 'move', dayIdx)}
-                          title={`${task.title} - ${format(displayTime, 'HH:mm')}${endTime ? ` ~ ${format(endTime, 'HH:mm')}` : ''}`}
+                          title={`${displayTask.title} - ${format(displayTime, 'HH:mm')}${endTime ? ` ~ ${format(endTime, 'HH:mm')}` : ''}`}
                         >
                           <div className="flex items-start gap-0.5 h-full">
                             <span className={`w-1 h-full rounded-full shrink-0 ${colors.dot}`} />
                             <div className="flex-1 min-w-0 overflow-hidden">
-                              <p className={`font-medium truncate leading-tight text-[11px] ${task.status === 'completed' ? 'line-through' : ''}`}>
-                                {task.title}
+                              <p className={`font-medium truncate leading-tight text-[11px] ${displayTask.status === 'completed' ? 'line-through' : ''}`}>
+                                {displayTask.title}
                               </p>
                               {height > 35 && (
                                 <p className="text-[10px] opacity-75 truncate">
@@ -1110,7 +1125,7 @@ export default function CalendarPage() {
                           </div>
 
                           {/* 底部 resize handle - 只要有開始時間就可以調整 */}
-                          {taskStart && (
+                          {taskStart && !isDragging && (
                             <div
                               className="absolute bottom-0 left-0 right-0 h-6 cursor-ns-resize group z-10"
                               onMouseDown={(e) => {
@@ -1126,66 +1141,6 @@ export default function CalendarPage() {
                       )
                     })}
 
-                    {/* 拖曳中的任務 - 單獨渲染以支援跨天顯示 */}
-                    {draggingTask && (() => {
-                      const dragTaskStart = draggingTask.startDate ? new Date(draggingTask.startDate) : null
-                      const dragTaskEnd = draggingTask.dueDate ? new Date(draggingTask.dueDate) : null
-
-                      // 檢查拖曳中的任務是否應該顯示在這一天
-                      if (!dragTaskStart || !isSameDay(dragTaskStart, day)) return null
-                      if (dragTaskStart.getHours() === 0 && dragTaskStart.getMinutes() === 0) return null
-
-                      const displayTime = dragTaskStart
-                      const endTime = dragTaskEnd && isSameDay(dragTaskEnd, day) ? dragTaskEnd : null
-
-                      const startHour = displayTime.getHours()
-                      const startMinute = displayTime.getMinutes()
-                      const topOffset = (startHour - 6) * 56 + (startMinute / 60) * 56
-
-                      let height = 50
-                      if (endTime) {
-                        const durationMinutes = differenceInMinutes(endTime, displayTime)
-                        height = Math.max(24, (durationMinutes / 60) * 56 - 4)
-                      }
-
-                      if (startHour < 6) return null
-
-                      const colors = getTaskBarStyle(draggingTask)
-
-                      return (
-                        <div
-                          key={`dragging-${draggingTask.id}`}
-                          className={`
-                            absolute rounded-md px-1 py-1 text-xs
-                            overflow-hidden select-none
-                            ${colors.bg} ${colors.text}
-                            ${draggingTask.status === 'completed' ? 'opacity-50' : ''}
-                            shadow-lg ring-2 ring-primary cursor-grabbing
-                          `}
-                          style={{
-                            top: `${topOffset}px`,
-                            height: `${height}px`,
-                            left: '2px',
-                            right: '2px',
-                            zIndex: 30,
-                          }}
-                        >
-                          <div className="flex items-start gap-0.5 h-full">
-                            <span className={`w-1 h-full rounded-full shrink-0 ${colors.dot}`} />
-                            <div className="flex-1 min-w-0 overflow-hidden">
-                              <p className={`font-medium truncate leading-tight text-[11px] ${draggingTask.status === 'completed' ? 'line-through' : ''}`}>
-                                {draggingTask.title}
-                              </p>
-                              {height > 35 && (
-                                <p className="text-[10px] opacity-75 truncate">
-                                  {format(displayTime, 'HH:mm')}{endTime ? ` - ${format(endTime, 'HH:mm')}` : ''}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })()}
 
                     {/* 當前時間線 */}
                     {isTodayDate && (
