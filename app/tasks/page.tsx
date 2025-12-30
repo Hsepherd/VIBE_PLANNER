@@ -1,10 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import {
   Dialog,
@@ -26,14 +24,13 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Calendar as CalendarComponent } from '@/components/ui/calendar'
 import { DateTimePicker } from '@/components/ui/datetime-picker'
-import { useSupabaseTasks, type Task, type RecurrenceType } from '@/lib/useSupabaseTasks'
+import { useSupabaseTasks, type Task } from '@/lib/useSupabaseTasks'
 import { useSupabaseProjects, type Project } from '@/lib/useSupabaseProjects'
-import type { RecurrenceConfig } from '@/lib/supabase-api'
 import { RecurrenceSelector, RecurrenceBadge } from '@/components/task/RecurrenceSelector'
 import { getTeamMembers, addTeamMember, removeTeamMember } from '@/lib/team-members'
 import { getTags, addTag, removeTag, getTagColor, TAG_COLORS, type Tag } from '@/lib/tags'
 import { getGroups, addGroup, removeGroup, getGroupColor, GROUP_COLORS, type Group } from '@/lib/groups'
-import { format, isToday, isTomorrow, isThisWeek, isPast, addDays, startOfDay } from 'date-fns'
+import { format, isToday, isTomorrow, isPast, addDays, startOfDay } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
 import {
   DndContext,
@@ -60,20 +57,17 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   Check,
-  CheckCircle2,
   Circle,
   Trash2,
   Plus,
   Calendar,
   ChevronDown,
   ChevronRight,
-  ArrowUpDown,
   RefreshCw,
   Loader2,
   User,
   FolderOpen,
   FolderKanban,
-  FileText,
   MessageSquareQuote,
   ListChecks,
   Info,
@@ -266,7 +260,8 @@ function TaskDetailDialog({
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [editingTitle, setEditingTitle] = useState('')
 
-  // 當 task 變化時更新本地狀態
+  // 當 task 變化時更新本地狀態（這是同步 prop 到本地狀態的合理用例）
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => {
     setLocalTask(task)
     setShowMemberManager(false)

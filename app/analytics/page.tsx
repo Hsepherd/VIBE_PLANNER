@@ -6,20 +6,13 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { useSupabaseTasks, type Task } from '@/lib/useSupabaseTasks'
 import { useSupabaseProjects } from '@/lib/useSupabaseProjects'
-import { useCategoryMappings, getCategoryColor } from '@/lib/useCategoryMappings'
+import { useCategoryMappings } from '@/lib/useCategoryMappings'
 import {
   format,
   startOfDay,
@@ -53,7 +46,6 @@ import {
   Users,
   Edit3,
   BookOpen,
-  ChevronDown,
 } from 'lucide-react'
 import {
   BarChart,
@@ -89,6 +81,32 @@ const CATEGORIES: CategoryConfig[] = [
   { name: '其他', color: '#9CA3AF', icon: CheckCircle2 },
 ]
 
+// 自訂柱狀圖 Tooltip（移到組件外部避免每次 render 重新創建）
+interface DayData {
+  day: string
+  total: number
+  reachedGoal: boolean
+  fullDate: string
+}
+
+function CustomBarTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: DayData }> }) {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload
+    return (
+      <div className="bg-white border rounded-lg shadow-lg p-3 text-sm">
+        <p className="font-medium">{data.fullDate}</p>
+        <p className="text-muted-foreground">完成 {data.total} 項任務</p>
+        {data.reachedGoal && (
+          <p className="text-green-600 flex items-center gap-1 mt-1">
+            <CheckCircle2 className="h-3 w-3" /> 達成目標！
+          </p>
+        )}
+      </div>
+    )
+  }
+  return null
+}
+
 // 計算任務時間（分鐘）
 function getTaskDuration(task: Task): number {
   if (task.startDate && task.dueDate) {
@@ -120,7 +138,7 @@ const PROJECT_COLORS = [
 export default function AnalyticsPage() {
   const { tasks, isLoading } = useSupabaseTasks()
   const { projects } = useSupabaseProjects()
-  const { classifyTask, learnCategory, mappings, isLoading: mappingsLoading } = useCategoryMappings()
+  const { classifyTask, learnCategory, mappings } = useCategoryMappings()
   const [activeTab, setActiveTab] = useState<'daily' | 'weekly'>('daily')
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
 
@@ -375,25 +393,6 @@ export default function AnalyticsPage() {
     return { diff, percentage, lastWeek: lastWeekTasks.length }
   }, [tasks, weekCompleted, thisWeekStart])
 
-  // 自訂柱狀圖 Tooltip
-  const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ payload: typeof last7DaysData[0] }> }) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload
-      return (
-        <div className="bg-white border rounded-lg shadow-lg p-3 text-sm">
-          <p className="font-medium">{data.fullDate}</p>
-          <p className="text-muted-foreground">完成 {data.total} 項任務</p>
-          {data.reachedGoal && (
-            <p className="text-green-600 flex items-center gap-1 mt-1">
-              <CheckCircle2 className="h-3 w-3" /> 達成目標！
-            </p>
-          )}
-        </div>
-      )
-    }
-    return null
-  }
-
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -542,7 +541,8 @@ export default function AnalyticsPage() {
                       tickLine={false}
                       allowDecimals={false}
                     />
-                    <Tooltip content={activeTab === 'daily' ? <CustomTooltip /> : undefined} />
+                    {activeTab === 'daily' && <Tooltip content={<CustomBarTooltip />} />}
+                    {activeTab !== 'daily' && <Tooltip />}
                     <Bar dataKey="total" radius={[4, 4, 0, 0]}>
                       {(activeTab === 'daily' ? last7DaysData : last4WeeksData).map((entry, index) => (
                         <Cell

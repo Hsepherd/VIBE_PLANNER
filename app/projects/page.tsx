@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,7 +9,7 @@ import { useSupabaseProjects, type Project } from '@/lib/useSupabaseProjects'
 import { useSupabaseTasks, type Task } from '@/lib/useSupabaseTasks'
 import { format } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
-import { Plus, Trash2, FolderKanban, Edit2, Check, X, Loader2, RefreshCw } from 'lucide-react'
+import { Plus, Trash2, FolderKanban, Edit2, Loader2, RefreshCw } from 'lucide-react'
 
 export default function ProjectsPage() {
   const {
