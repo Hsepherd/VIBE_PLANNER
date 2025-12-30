@@ -70,6 +70,12 @@ export default function CalendarPage() {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [expandedAllDay, setExpandedAllDay] = useState(false) // 全天區域是否展開
 
+  // 觸控裝置偵測
+  const [isTouchDevice, setIsTouchDevice] = useState(false)
+  useEffect(() => {
+    setIsTouchDevice('ontouchstart' in window || navigator.maxTouchPoints > 0)
+  }, [])
+
   // 團隊成員
   const [teamMembers, setTeamMembers] = useState<string[]>([])
   useEffect(() => {
@@ -159,6 +165,11 @@ export default function CalendarPage() {
   const [hasDragged, setHasDragged] = useState(false) // 追蹤是否真的有拖曳
   const [dragStartDayIndex, setDragStartDayIndex] = useState(0) // 開始拖曳時的天數索引
   const timeGridRef = useRef<HTMLDivElement>(null)
+
+  // 長按觸發調整模式（觸控裝置專用）
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const [longPressTask, setLongPressTask] = useState<Task | null>(null)
+  const [showResizeMode, setShowResizeMode] = useState(false)
 
   // 鍵盤左右箭頭切換日期
   useEffect(() => {
@@ -413,6 +424,38 @@ export default function CalendarPage() {
     const hours = Math.floor(totalMinutes / 60)
     const minutes = Math.round((totalMinutes % 60) / 15) * 15 // 15 分鐘為單位
     return setMinutes(setHours(baseDate, Math.min(23, Math.max(6, hours))), minutes)
+  }, [])
+
+  // 長按開始（觸控裝置）
+  const handleTouchStart = useCallback((task: Task, dayIdx: number) => {
+    // 清除之前的計時器
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+    }
+
+    // 設定長按計時器（300ms）
+    longPressTimerRef.current = setTimeout(() => {
+      setLongPressTask(task)
+      setShowResizeMode(true)
+      // 觸覺回饋（如果支援）
+      if (navigator.vibrate) {
+        navigator.vibrate(50)
+      }
+    }, 300)
+  }, [])
+
+  // 長按結束
+  const handleTouchEnd = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }, [])
+
+  // 取消長按調整模式
+  const cancelResizeMode = useCallback(() => {
+    setLongPressTask(null)
+    setShowResizeMode(false)
   }, [])
 
   // 開始拖曳任務（移動或調整時長）
@@ -1127,6 +1170,7 @@ export default function CalendarPage() {
                             ${colors.bg} ${colors.text}
                             ${displayTask.status === 'completed' ? 'opacity-50' : ''}
                             ${isDragging ? 'shadow-xl ring-2 ring-primary cursor-grabbing z-30 scale-[1.02]' : 'cursor-grab hover:brightness-95 hover:shadow-md z-5'}
+                            ${showResizeMode && longPressTask?.id === task.id ? 'ring-2 ring-primary ring-offset-2 animate-pulse' : ''}
                             transition-shadow
                           `}
                           style={{
@@ -1136,6 +1180,9 @@ export default function CalendarPage() {
                             width: `calc(${columnWidth}% - 4px)`,
                           }}
                           onMouseDown={(e) => handleDragStart(e, task, 'move', dayIdx)}
+                          onTouchStart={() => isTouchDevice && handleTouchStart(task, dayIdx)}
+                          onTouchEnd={handleTouchEnd}
+                          onTouchCancel={handleTouchEnd}
                           title={`${displayTask.title} - ${format(displayTime, 'HH:mm')}${endTime ? ` ~ ${format(endTime, 'HH:mm')}` : ''}`}
                         >
                           {/* 拖曳時的時間預覽 Tooltip */}
@@ -1183,13 +1230,21 @@ export default function CalendarPage() {
                           {/* 底部 resize handle - 有開始時間或截止時間就可以調整 */}
                           {(taskStart || taskEnd) && !isDragging && (
                             <div
-                              className="absolute bottom-0 left-0 right-0 h-10 cursor-ns-resize group z-20
+                              className={`absolute bottom-0 left-0 right-0 cursor-ns-resize group z-20
                                          hover:bg-gradient-to-t hover:from-black/15 hover:to-transparent
-                                         transition-all duration-150 rounded-b-md"
+                                         transition-all duration-150 rounded-b-md
+                                         ${isTouchDevice ? 'h-14' : 'h-10'}
+                                         ${showResizeMode && longPressTask?.id === task.id ? 'bg-primary/20' : ''}`}
                               onMouseDown={(e) => {
                                 e.stopPropagation()
                                 e.preventDefault()
                                 handleDragStart(e, task, 'resize', dayIdx)
+                              }}
+                              onTouchStart={(e) => {
+                                if (showResizeMode && longPressTask?.id === task.id) {
+                                  e.stopPropagation()
+                                  // 觸控裝置在長按模式下可以直接調整
+                                }
                               }}
                             >
                               {/* 拖曳指示條 */}
@@ -1579,6 +1634,54 @@ export default function CalendarPage() {
                   建立任務
                 </Button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 觸控長按調整模式面板 */}
+      {showResizeMode && longPressTask && (
+        <div className="fixed inset-x-0 bottom-0 z-50 p-4 bg-background border-t shadow-lg animate-in slide-in-from-bottom duration-200">
+          <div className="max-w-md mx-auto">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="font-medium text-sm">{longPressTask.title}</p>
+                <p className="text-xs text-muted-foreground">
+                  {longPressTask.startDate && format(new Date(longPressTask.startDate), 'HH:mm')}
+                  {longPressTask.dueDate && ` - ${format(new Date(longPressTask.dueDate), 'HH:mm')}`}
+                </p>
+              </div>
+              <Button variant="ghost" size="sm" onClick={cancelResizeMode}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                className="h-12"
+                onClick={() => {
+                  setSelectedTask(longPressTask)
+                  cancelResizeMode()
+                }}
+              >
+                <CalendarIcon className="h-4 w-4 mr-2" />
+                編輯詳情
+              </Button>
+              <Button
+                variant="outline"
+                className="h-12"
+                onClick={() => {
+                  // 快速延長 30 分鐘
+                  const currentEnd = longPressTask.dueDate ? new Date(longPressTask.dueDate) : new Date()
+                  const newEnd = addMinutes(currentEnd, 30)
+                  updateSupabaseTask(longPressTask.id, { dueDate: newEnd })
+                  toast.success('已延長 30 分鐘')
+                  cancelResizeMode()
+                }}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                延長 30 分鐘
+              </Button>
             </div>
           </div>
         </div>
