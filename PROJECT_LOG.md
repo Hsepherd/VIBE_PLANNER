@@ -122,6 +122,44 @@ export const estimateMessageTokens = (messages) => {
 
 ---
 
+### 📅 行事曆任務時間調整 UX 優化
+
+**事件**：全面優化行事曆頁面的任務時間調整功能
+
+**需求來源**：PM 分析後建議的 P1-P3 優先級改善項目
+
+**實作內容**：
+
+#### P1 拖曳視覺回饋優化
+- 加大 resize handle 高度（觸控 h-14 / 桌面 h-10）
+- 新增 Gradient hover 效果與箭頭圖示
+- 拖曳時即時顯示時間預覽 tooltip
+  - 移動模式：顯示開始~結束時間區間
+  - 調整時長模式：顯示結束時間
+
+#### P2 精確時間編輯
+- TaskDetailDialog 新增時間調整 Popover
+- 開始/結束時間輸入框（HH:mm 格式）
+- 快速時長按鈕（15分、30分、1小時、1.5小時、2小時）
+- Toast 提示 + 5 秒內 Undo 還原功能（使用 Sonner 套件）
+
+#### P3 觸控裝置優化
+- 觸控裝置自動偵測（`ontouchstart` / `maxTouchPoints`）
+- 長按 300ms 啟動調整模式
+- 觸覺回饋（`navigator.vibrate`）
+- 底部操作面板（拖曳移動、調整時長、取消）
+- 加大觸控目標區域
+
+**新增檔案**：
+- `src/components/ui/sonner.tsx` - Toast 元件
+
+**修改檔案**：
+- `app/calendar/page.tsx` - 主要 UX 優化
+- `src/components/task/TaskDetailDialog.tsx` - 時間編輯 Popover
+- `src/components/layout/ClientLayout.tsx` - Toaster 整合
+
+---
+
 ### 🔧 全面維護更新 + 安全漏洞修復
 
 **事件**：執行全面專案維護，修復安全漏洞、更新套件、清理程式碼

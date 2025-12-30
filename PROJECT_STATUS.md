@@ -46,6 +46,7 @@
 | 🧠 AI 學習系統優化 | ✅ 完成 | 100% |
 | 🔧 全面維護更新 | ✅ 完成 | 100% |
 | 🐛 系統穩定性優化 | ✅ 完成 | 100% |
+| 📅 行事曆 UX 優化 | ✅ 完成 | 100% |
 
 ---
 
@@ -215,6 +216,23 @@
 - [x] Dashboard 改用 useSupabaseTasks（資料同步 Supabase）
 - [x] 新增 Dashboard Loading skeleton
 - [x] 新增 Token 估算工具（token-utils.ts）
+
+### 行事曆任務時間調整 UX 優化（已完成）
+- [x] P1 拖曳視覺回饋優化
+  - [x] 加大 resize handle（觸控 h-14 / 桌面 h-10）
+  - [x] Gradient hover 效果與箭頭圖示
+  - [x] 拖曳時即時預覽時間 tooltip（移動顯示區間、resize 顯示結束時間）
+- [x] P2 精確時間編輯
+  - [x] TaskDetailDialog 新增時間調整 Popover
+  - [x] 開始/結束時間輸入框
+  - [x] 快速時長按鈕（15分、30分、1小時、1.5小時、2小時）
+  - [x] Toast 提示 + 5 秒內 Undo 還原功能（Sonner 套件）
+- [x] P3 觸控裝置優化
+  - [x] 觸控裝置自動偵測（ontouchstart / maxTouchPoints）
+  - [x] 長按 300ms 啟動調整模式
+  - [x] 觸覺回饋（navigator.vibrate）
+  - [x] 底部操作面板（拖曳移動、調整時長、取消）
+  - [x] 加大觸控目標區域
 
 ### 使用者驗證系統（已完成）
 - [x] Supabase Auth 整合
