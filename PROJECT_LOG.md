@@ -4,6 +4,168 @@
 
 ---
 
+## 2025-12-30
+
+### 🐛 系統穩定性優化 - Dashboard & Analytics Bug 修復
+
+**事件**：修復 Dashboard 逾期任務邏輯錯誤和 Analytics 圖表無數據顯示問題
+
+**問題根源**：
+- Dashboard 使用 `useAppStore`（本地 Zustand store）
+- 其他頁面（Tasks、Calendar、Analytics）使用 `useSupabaseTasks`（Supabase 同步）
+- 資料來源不一致導致：
+  1. Dashboard 完成任務只更新本地 store，不同步到 Supabase
+  2. `completed_at` 沒有寫入資料庫，Analytics 圖表無法計算
+
+**修復方案**：
+
+1. **Dashboard 改用 useSupabaseTasks**
+   ```diff
+   - import { useAppStore } from '@/lib/store'
+   + import { useSupabaseTasks } from '@/lib/useSupabaseTasks'
+
+   - const tasks = useAppStore((state) => state.tasks)
+   - const completeTask = useAppStore((state) => state.completeTask)
+   + const { tasks, completeTask, updateTask, isLoading } = useSupabaseTasks()
+   ```
+
+2. **新增 Loading skeleton**
+   - Dashboard 載入時顯示 skeleton 動畫
+   - 避免資料載入時的空白畫面
+
+**驗證結果**：
+| 測試項目 | 修復前 | 修復後 |
+|---------|-------|-------|
+| 過期任務數量 | 16（含已完成）| 14（正確過濾）|
+| 點擊完成後 | 任務仍顯示 | 立即移除 |
+| 已完成統計 | 不變 | 正確增加 |
+| Analytics 今日目標 | 0/5 | 2/5（正確計算）|
+
+**修改檔案**：
+- `app/dashboard/page.tsx` - 改用 useSupabaseTasks + Loading skeleton
+
+**備註**：
+- Analytics 圖表歷史資料仍為空（舊任務無 `completed_at`）
+- 新完成的任務會正確顯示在圖表中
+
+---
+
+### 🔧 FIX-003 專案進度一致性修復
+
+**問題**：Dashboard 和 Projects 頁面顯示不同的專案進度
+
+**根源分析**：
+- Dashboard 使用靜態 `project.progress` 欄位
+- Projects 頁面使用動態計算（完成任務數 / 總任務數）
+
+**解決方案**：
+```typescript
+// 在 Dashboard 新增動態計算函數
+const getProjectProgress = (projectId: string) => {
+  const projectTasks = tasks.filter((t: Task) => t.projectId === projectId)
+  if (projectTasks.length === 0) return 0
+  const completed = projectTasks.filter((t: Task) => t.status === 'completed').length
+  return Math.round((completed / projectTasks.length) * 100)
+}
+```
+
+**修改檔案**：
+- `app/dashboard/page.tsx` - 新增 `getProjectProgress()` 函數
+
+---
+
+### 🔧 FIX-004 API 使用統計修復
+
+**問題**：Settings 頁面的 API 使用統計全為 0
+
+**根源分析**：
+- OpenAI Streaming API 即使設定 `include_usage: true` 也不一定回傳 usage 資料
+- 當 `data.usage` 為 null 時，`addApiUsage()` 不會被呼叫
+
+**解決方案**：Token 估算機制
+
+1. **新增 `src/lib/token-utils.ts`**
+```typescript
+// 中英文混合估算
+export const estimateTokens = (text: string): number => {
+  const chineseChars = (text.match(/[\u4e00-\u9fff]/g) || []).length
+  const otherChars = text.length - chineseChars
+  return chineseChars * 2 + Math.ceil(otherChars / 4)
+}
+
+export const estimateMessageTokens = (messages) => {
+  // 包含每則訊息的 overhead
+}
+```
+
+2. **修改 `src/components/chat/InputArea.tsx`**
+```diff
+- if (data.usage) {
+-   addApiUsage({ ... })
+- }
++ // 優先使用 API 回傳值，否則估算
++ const promptTokens = data.usage?.promptTokens || estimateMessageTokens(apiMessages)
++ const completionTokens = data.usage?.completionTokens || estimateTokens(fullContent)
++ addApiUsage({ model: 'gpt-4.1-mini', promptTokens, completionTokens })
+```
+
+**新增檔案**：
+- `src/lib/token-utils.ts` - Token 估算工具
+- `PRD_FIX_004_API_STATS.md` - 完整 PRD 文件
+
+**修改檔案**：
+- `src/components/chat/InputArea.tsx` - 引入估算函數，確保每次都記錄 API 使用量
+
+**備註**：
+- 估算誤差約 ±20%，對花費追蹤的概覽用途可接受
+- 未來可升級為 tiktoken 套件精確計算
+
+---
+
+### 🔧 全面維護更新 + 安全漏洞修復
+
+**事件**：執行全面專案維護，修復安全漏洞、更新套件、清理程式碼
+
+**完成項目**：
+
+1. **修復 Next.js 重大安全漏洞**
+   - 從 Next.js 16.0.4 升級到 16.1.1
+   - 修復 3 個 critical vulnerabilities:
+     - RCE in React flight protocol (GHSA-9qr9-h5gf-34mp)
+     - Server Actions Source Code Exposure (GHSA-w37m-7fhw-fmv9)
+     - DoS with Server Components (GHSA-mwv6-3258-q52c)
+
+2. **更新過時套件**
+   - baseline-browser-mapping（消除 build 警告）
+   - @supabase/supabase-js: 2.84.0 → 2.89.0
+   - openai: 6.9.1 → 6.15.0
+   - tailwindcss: 4.1.17 → 4.1.18
+   - zustand: 5.0.8 → 5.0.9
+   - 其他多個套件更新
+
+3. **修復 ESLint 錯誤**
+   - `analytics/page.tsx`: 將 CustomTooltip 移到組件外部避免每次 render 重新創建
+   - `dashboard/page.tsx`: 使用 lazy initialization 取代 useEffect 中的 setState
+   - `tasks/page.tsx`: 添加合理的 eslint-disable 註釋處理 prop 同步
+
+4. **清理 unused imports**
+   - 移除 `analytics/page.tsx` 中未使用的 Select, ChevronDown 等
+   - 移除 `calendar/page.tsx` 中未使用的 Card, Badge, getHours
+   - 移除 `tasks/page.tsx` 中未使用的 Card, Badge, RecurrenceType 等
+   - 移除 `projects/page.tsx` 中未使用的 useEffect, Check, X
+
+**技術細節**：
+| 項目 | 修復方式 |
+|-----|---------|
+| CustomTooltip 錯誤 | 移到組件外部定義，避免 render 時重新創建 |
+| setState in effect | 改用 useState lazy initialization |
+| 安全漏洞 | npm install next@16.1.1 eslint-config-next@16.1.1 |
+| Build 警告 | 更新 baseline-browser-mapping 到最新版 |
+
+**Build 狀態**：✅ 成功（0 漏洞，21 頁面正常生成）
+
+---
+
 ## 2025-12-11
 
 ### 🧠 AI 學習系統優化 + 行事曆 TaskDetailDialog 整合

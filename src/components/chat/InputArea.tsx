@@ -12,6 +12,7 @@ import { useAuth } from '@/lib/useAuth'
 import { Send, Paperclip, X, Loader2, Image as ImageIcon, Brain } from 'lucide-react'
 import { parseAIResponse, findDuplicateTask, type TaskSearchResult } from '@/lib/utils-client'
 import { learnFromUserReply } from '@/lib/few-shot-learning'
+import { estimateTokens, estimateMessageTokens } from '@/lib/token-utils'
 
 export default function InputArea() {
   const [input, setInput] = useState('')
@@ -451,13 +452,16 @@ export default function InputArea() {
                 }
 
                 // 記錄 API 使用量
-                if (data.usage) {
-                  addApiUsage({
-                    model: data.usage.model,
-                    promptTokens: data.usage.promptTokens,
-                    completionTokens: data.usage.completionTokens,
-                  })
-                }
+                // 優先使用 API 回傳的 usage，否則使用估算值
+                // （OpenAI Streaming API 有時不會回傳 usage 資料）
+                const promptTokens = data.usage?.promptTokens || estimateMessageTokens(apiMessages)
+                const completionTokens = data.usage?.completionTokens || estimateTokens(fullContent)
+
+                addApiUsage({
+                  model: data.usage?.model || 'gpt-4.1-mini',
+                  promptTokens,
+                  completionTokens,
+                })
               } else if (data.type === 'error') {
                 clearStreamingContent()
                 const errorMessageObj: Message = {

@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useMemo, useEffect, ReactNode } from 'react'
+import { useState, useMemo, ReactNode } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { useAppStore, type AppState, type Task, type Project } from '@/lib/store'
+import { useSupabaseTasks, type Task } from '@/lib/useSupabaseTasks'
+import { useAppStore, type AppState, type Project } from '@/lib/store'
 import {
   format,
   isToday,
@@ -121,28 +122,28 @@ function SortableWidget({
 }
 
 export default function DashboardPage() {
-  const tasks = useAppStore((state: AppState) => state.tasks)
+  // 使用 Supabase 同步的任務資料（修復 BUG #1 & #2）
+  const { tasks, completeTask, updateTask, isLoading } = useSupabaseTasks()
+  // Projects 仍使用本地 store（暫時保持）
   const projects = useAppStore((state: AppState) => state.projects)
-  const completeTask = useAppStore((state: AppState) => state.completeTask)
-  const updateTask = useAppStore((state: AppState) => state.updateTask)
 
   // 編輯模式
   const [isEditMode, setIsEditMode] = useState(false)
 
-  // 區塊排序配置
-  const [widgets, setWidgets] = useState<WidgetConfig[]>(defaultWidgets)
-
-  // 從 localStorage 載入配置
-  useEffect(() => {
-    const saved = localStorage.getItem('dashboard-layout')
-    if (saved) {
-      try {
-        setWidgets(JSON.parse(saved))
-      } catch {
-        // ignore
+  // 區塊排序配置（使用 lazy initialization 從 localStorage 載入）
+  const [widgets, setWidgets] = useState<WidgetConfig[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('dashboard-layout')
+      if (saved) {
+        try {
+          return JSON.parse(saved)
+        } catch {
+          // ignore
+        }
       }
     }
-  }, [])
+    return defaultWidgets
+  })
 
   // 儲存配置
   const saveLayout = () => {
@@ -242,6 +243,14 @@ export default function DashboardPage() {
   }
 
   const selectedDateTasks = selectedDate ? getTasksForDate(selectedDate) : []
+
+  // 計算專案進度（動態計算，確保與 Projects 頁面一致）
+  const getProjectProgress = (projectId: string) => {
+    const projectTasks = tasks.filter((t: Task) => t.projectId === projectId)
+    if (projectTasks.length === 0) return 0
+    const completed = projectTasks.filter((t: Task) => t.status === 'completed').length
+    return Math.round((completed / projectTasks.length) * 100)
+  }
 
   // DnD sensors
   const sensors = useSensors(
@@ -372,17 +381,20 @@ export default function DashboardPage() {
                 <p className="text-muted-foreground text-center py-4">尚未建立任何專案</p>
               ) : (
                 <div className="space-y-4">
-                  {projects.map((project: Project) => (
-                    <div key={project.id} className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{project.name}</span>
-                        <span className="text-sm text-muted-foreground">{project.progress}%</span>
+                  {projects.map((project: Project) => {
+                    const progress = getProjectProgress(project.id)
+                    return (
+                      <div key={project.id} className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">{project.name}</span>
+                          <span className="text-sm text-muted-foreground">{progress}%</span>
+                        </div>
+                        <div className="h-2 rounded-full bg-muted overflow-hidden">
+                          <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
+                        </div>
                       </div>
-                      <div className="h-2 rounded-full bg-muted overflow-hidden">
-                        <div className="h-full bg-primary transition-all" style={{ width: `${project.progress}%` }} />
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
               <Link href="/projects">
@@ -507,6 +519,35 @@ export default function DashboardPage() {
   const displayWidgets = selectedDate
     ? [...visibleWidgets.filter(w => w.id !== 'calendar'), { id: 'calendar' as WidgetId, title: '行事曆', colSpan: 1 as const, visible: true }, { id: 'calendarTasks' as WidgetId, title: '日期任務', colSpan: 1 as const, visible: true }]
     : visibleWidgets
+
+  // Loading 狀態
+  if (isLoading) {
+    return (
+      <div className="flex-1 overflow-y-auto">
+        <div className="p-6 space-y-6">
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold">📊 Dashboard</h1>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <Card key={i} className="animate-pulse">
+                <CardHeader className="pb-2">
+                  <div className="h-4 bg-muted rounded w-20" />
+                </CardHeader>
+                <CardContent>
+                  <div className="h-8 bg-muted rounded w-12 mb-2" />
+                  <div className="h-3 bg-muted rounded w-24" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          <div className="text-center text-muted-foreground py-8">
+            載入中...
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex-1 overflow-y-auto">

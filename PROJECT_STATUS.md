@@ -1,8 +1,8 @@
 # Vibe Planner - 專案進度
 
-> **最後更新**：2025-12-11
+> **最後更新**：2025-12-30
 > **整體進度**：100%
-> **目前階段**：🧠 AI 學習系統優化 + 行事曆 TaskDetailDialog 整合
+> **目前階段**：🐛 系統穩定性優化（Bug 修復完成）
 
 ---
 
@@ -44,6 +44,8 @@
 | 🧠 AI 智能任務分類 | ✅ 完成 | 100% |
 | 📅 行事曆 TaskDetailDialog 整合 | ✅ 完成 | 100% |
 | 🧠 AI 學習系統優化 | ✅ 完成 | 100% |
+| 🔧 全面維護更新 | ✅ 完成 | 100% |
+| 🐛 系統穩定性優化 | ✅ 完成 | 100% |
 
 ---
 
@@ -198,6 +200,22 @@
 - [x] 手動新增 5 條學習指令（標題風格、任務拆解、文件產出等）
 - [x] 知識庫現有 6 條學習指令
 
+### 全面維護更新（已完成）
+- [x] 修復 Next.js 重大安全漏洞（16.0.4 → 16.1.1）
+- [x] 更新過時套件（Supabase、OpenAI、Tailwind 等）
+- [x] 修復 ESLint 錯誤（CustomTooltip、setState in effect）
+- [x] 清理 unused imports（多個頁面）
+- [x] Build 成功無漏洞
+
+### 系統穩定性優化（已完成）
+- [x] 修復 Dashboard 逾期任務邏輯錯誤（BUG #1）
+- [x] 修復 Analytics 圖表無數據顯示（BUG #2）
+- [x] 修復專案進度顯示不一致（FIX-003）
+- [x] 修復 API 使用統計全為 0（FIX-004）
+- [x] Dashboard 改用 useSupabaseTasks（資料同步 Supabase）
+- [x] 新增 Dashboard Loading skeleton
+- [x] 新增 Token 估算工具（token-utils.ts）
+
 ### 使用者驗證系統（已完成）
 - [x] Supabase Auth 整合
 - [x] 登入/註冊頁面（Google OAuth + Email/Password）
@@ -306,6 +324,12 @@ vibe-planner/
 ## 已知問題 🐛
 
 （目前無已知問題）
+
+### 已修復問題（2025-12-30）
+1. ~~Dashboard 逾期任務顯示已完成任務~~ → 已修復（改用 useSupabaseTasks）
+2. ~~Analytics 圖表無數據顯示~~ → 已修復（歷史資料無 completed_at，新完成任務正常顯示）
+3. ~~專案進度顯示不一致~~ → 已修復（Dashboard 使用動態計算）
+4. ~~API 使用統計全為 0~~ → 已修復（新增 Token 估算機制）
 
 ---
 
