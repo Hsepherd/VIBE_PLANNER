@@ -1,9 +1,7 @@
 'use client'
 
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useSupabaseTasks, type Task } from '@/lib/useSupabaseTasks'
 import { useSupabaseProjects, type Project } from '@/lib/useSupabaseProjects'
@@ -23,7 +21,6 @@ import {
   isSameMonth,
   isSameDay,
   isToday,
-  getHours,
   setHours,
   setMinutes,
   differenceInMinutes,
@@ -45,7 +42,9 @@ import {
   Loader2,
   Plus,
   X,
+  Undo2,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -515,11 +514,39 @@ export default function CalendarPage() {
   const handleDragEnd = useCallback(async () => {
     if (draggingTask && dragMode) {
       if (hasDragged) {
+        // 保存原始時間用於 Undo
+        const originalTask = tasks.find((t: Task) => t.id === draggingTask.id)
+        const originalStartDate = originalTask?.startDate
+        const originalDueDate = originalTask?.dueDate
+
         // 真的有拖曳，儲存更新
         await updateSupabaseTask(draggingTask.id, {
           startDate: draggingTask.startDate,
           dueDate: draggingTask.dueDate,
         })
+
+        // 顯示 Toast 通知（帶有 Undo 按鈕）
+        const newStart = draggingTask.startDate ? format(new Date(draggingTask.startDate), 'HH:mm') : ''
+        const newEnd = draggingTask.dueDate ? format(new Date(draggingTask.dueDate), 'HH:mm') : ''
+        const timeText = newStart && newEnd ? `${newStart} - ${newEnd}` : newStart || newEnd
+
+        toast.success(
+          dragMode === 'move' ? '已移動任務' : '已調整時長',
+          {
+            description: `${draggingTask.title}: ${timeText}`,
+            action: {
+              label: '還原',
+              onClick: async () => {
+                await updateSupabaseTask(draggingTask.id, {
+                  startDate: originalStartDate,
+                  dueDate: originalDueDate,
+                })
+                toast.info('已還原任務時間')
+              },
+            },
+            duration: 5000,
+          }
+        )
       } else {
         // 只是點擊，打開 popup（找回原始任務資料）
         const originalTask = tasks.find((t: Task) => t.id === draggingTask.id)
@@ -1099,7 +1126,8 @@ export default function CalendarPage() {
                             overflow-hidden select-none
                             ${colors.bg} ${colors.text}
                             ${displayTask.status === 'completed' ? 'opacity-50' : ''}
-                            ${isDragging ? 'shadow-lg ring-2 ring-primary cursor-grabbing z-30' : 'cursor-grab hover:brightness-95 hover:shadow-md z-5'}
+                            ${isDragging ? 'shadow-xl ring-2 ring-primary cursor-grabbing z-30 scale-[1.02]' : 'cursor-grab hover:brightness-95 hover:shadow-md z-5'}
+                            transition-shadow
                           `}
                           style={{
                             top: `${topOffset}px`,
@@ -1110,6 +1138,34 @@ export default function CalendarPage() {
                           onMouseDown={(e) => handleDragStart(e, task, 'move', dayIdx)}
                           title={`${displayTask.title} - ${format(displayTime, 'HH:mm')}${endTime ? ` ~ ${format(endTime, 'HH:mm')}` : ''}`}
                         >
+                          {/* 拖曳時的時間預覽 Tooltip */}
+                          {isDragging && (
+                            <>
+                              {/* 移動模式：頂部顯示完整時間範圍 */}
+                              {dragMode === 'move' && displayTask.startDate && (
+                                <div className="absolute -top-7 left-1/2 -translate-x-1/2 z-50
+                                                bg-gray-900 text-white text-[10px] font-medium
+                                                px-2 py-1 rounded shadow-lg whitespace-nowrap
+                                                pointer-events-none">
+                                  {format(new Date(displayTask.startDate), 'HH:mm')}
+                                  {displayTask.dueDate && ` - ${format(new Date(displayTask.dueDate), 'HH:mm')}`}
+                                  <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px
+                                                  border-4 border-transparent border-t-gray-900" />
+                                </div>
+                              )}
+                              {/* Resize 模式：底部顯示結束時間 */}
+                              {dragMode === 'resize' && displayTask.dueDate && (
+                                <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 z-50
+                                                bg-primary text-primary-foreground text-[10px] font-medium
+                                                px-2 py-1 rounded shadow-lg whitespace-nowrap
+                                                pointer-events-none">
+                                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-px
+                                                  border-4 border-transparent border-b-primary" />
+                                  結束 {format(new Date(displayTask.dueDate), 'HH:mm')}
+                                </div>
+                              )}
+                            </>
+                          )}
                           <div className="flex items-start gap-0.5 h-full">
                             <span className={`w-1 h-full rounded-full shrink-0 ${colors.dot}`} />
                             <div className="flex-1 min-w-0 overflow-hidden">
@@ -1124,17 +1180,31 @@ export default function CalendarPage() {
                             </div>
                           </div>
 
-                          {/* 底部 resize handle - 只要有開始時間就可以調整 */}
-                          {taskStart && !isDragging && (
+                          {/* 底部 resize handle - 有開始時間或截止時間就可以調整 */}
+                          {(taskStart || taskEnd) && !isDragging && (
                             <div
-                              className="absolute bottom-0 left-0 right-0 h-6 cursor-ns-resize group z-10"
+                              className="absolute bottom-0 left-0 right-0 h-10 cursor-ns-resize group z-20
+                                         hover:bg-gradient-to-t hover:from-black/15 hover:to-transparent
+                                         transition-all duration-150 rounded-b-md"
                               onMouseDown={(e) => {
                                 e.stopPropagation()
                                 e.preventDefault()
                                 handleDragStart(e, task, 'resize', dayIdx)
                               }}
                             >
-                              <div className="absolute bottom-1 left-1/2 -translate-x-1/2 w-12 h-2 rounded-full bg-current opacity-30 group-hover:opacity-70 transition-opacity" />
+                              {/* 拖曳指示條 */}
+                              <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2
+                                              w-10 h-1 rounded-full bg-current opacity-30
+                                              group-hover:w-14 group-hover:h-1.5 group-hover:opacity-70
+                                              transition-all duration-150" />
+                              {/* Hover 時顯示上下箭頭圖示 */}
+                              <div className="absolute bottom-3 left-1/2 -translate-x-1/2
+                                              opacity-0 group-hover:opacity-60
+                                              transition-opacity duration-150 text-current">
+                                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+                                  <path d="M12 3l-6 6h12l-6-6zm0 18l6-6H6l6 6z"/>
+                                </svg>
+                              </div>
                             </div>
                           )}
                         </div>

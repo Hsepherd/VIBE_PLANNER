@@ -6,6 +6,7 @@ import Sidebar, { MobileSidebar, MobileMenuButton } from './Sidebar'
 import { AuthProvider } from '@/components/AuthProvider'
 import { ChatSessionProvider } from '@/lib/ChatSessionContext'
 import { AutoSync } from '@/components/AutoSync'
+import { Toaster } from '@/components/ui/sonner'
 
 // 公開頁面不需要顯示側邊欄
 const publicPaths = ['/login', '/signup', '/auth/callback']
@@ -33,6 +34,7 @@ export default function ClientLayout({
     <AuthProvider>
       <ChatSessionProvider>
         <AutoSync />
+        <Toaster position="bottom-right" richColors closeButton />
         <div className="flex h-screen">
           {/* 桌面版側邊欄 */}
           <Sidebar />

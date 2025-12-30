@@ -27,7 +27,7 @@ import type { Project } from '@/lib/useSupabaseProjects'
 import { RecurrenceSelector } from '@/components/task/RecurrenceSelector'
 import { getTagColor, TAG_COLORS, type Tag } from '@/lib/tags'
 import { getGroupColor, GROUP_COLORS, type Group } from '@/lib/groups'
-import { format } from 'date-fns'
+import { format, setHours, setMinutes, addMinutes } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
 import {
   Check,
@@ -39,6 +39,7 @@ import {
   FolderKanban,
   X,
   CalendarDays,
+  Clock,
   Settings,
   Edit3,
   Users,
@@ -471,6 +472,125 @@ export function TaskDetailDialog({
                       </Button>
                     </div>
                   )}
+                </PopoverContent>
+              </Popover>
+
+              {/* 時間編輯 - 開始與結束時間 */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button className="text-sm text-gray-600 flex items-center gap-1.5 hover:text-gray-900 hover:bg-gray-50 px-2.5 py-1 rounded-md border border-gray-200 transition-colors">
+                    <Clock className="h-3.5 w-3.5" />
+                    {displayTask.startDate && displayTask.dueDate ? (
+                      <>
+                        {format(new Date(displayTask.startDate), 'HH:mm')} - {format(new Date(displayTask.dueDate), 'HH:mm')}
+                      </>
+                    ) : displayTask.startDate ? (
+                      <>開始 {format(new Date(displayTask.startDate), 'HH:mm')}</>
+                    ) : displayTask.dueDate && (new Date(displayTask.dueDate).getHours() !== 0 || new Date(displayTask.dueDate).getMinutes() !== 0) ? (
+                      <>結束 {format(new Date(displayTask.dueDate), 'HH:mm')}</>
+                    ) : (
+                      '設定時間'
+                    )}
+                    <ChevronDown className="h-3 w-3 opacity-50" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-72 p-4" align="start">
+                  <div className="space-y-4">
+                    <h4 className="font-medium text-sm text-gray-900">時間設定</h4>
+
+                    {/* 開始時間 */}
+                    <div className="flex items-center gap-3">
+                      <label className="text-sm text-gray-600 w-12">開始</label>
+                      <input
+                        type="time"
+                        value={displayTask.startDate ? format(new Date(displayTask.startDate), 'HH:mm') : ''}
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            const [hours, minutes] = e.target.value.split(':').map(Number)
+                            const baseDate = displayTask.startDate ? new Date(displayTask.startDate) : (displayTask.dueDate ? new Date(displayTask.dueDate) : new Date())
+                            const newDate = setMinutes(setHours(baseDate, hours), minutes)
+                            handleUpdate({ startDate: newDate })
+                          }
+                        }}
+                        className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      />
+                      {displayTask.startDate && (
+                        <button
+                          onClick={() => handleUpdate({ startDate: undefined })}
+                          className="p-1 text-gray-400 hover:text-gray-600"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 結束時間 */}
+                    <div className="flex items-center gap-3">
+                      <label className="text-sm text-gray-600 w-12">結束</label>
+                      <input
+                        type="time"
+                        value={displayTask.dueDate ? format(new Date(displayTask.dueDate), 'HH:mm') : ''}
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            const [hours, minutes] = e.target.value.split(':').map(Number)
+                            const baseDate = displayTask.dueDate ? new Date(displayTask.dueDate) : (displayTask.startDate ? new Date(displayTask.startDate) : new Date())
+                            const newDate = setMinutes(setHours(baseDate, hours), minutes)
+                            handleUpdate({ dueDate: newDate })
+                          }
+                        }}
+                        className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      />
+                      {displayTask.dueDate && (
+                        <button
+                          onClick={() => handleUpdate({ dueDate: undefined })}
+                          className="p-1 text-gray-400 hover:text-gray-600"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 快速時長選擇 */}
+                    <div className="pt-2 border-t border-gray-100">
+                      <label className="text-xs text-gray-500 mb-2 block">快速設定時長</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { label: '15分', mins: 15 },
+                          { label: '30分', mins: 30 },
+                          { label: '1小時', mins: 60 },
+                          { label: '1.5小時', mins: 90 },
+                          { label: '2小時', mins: 120 },
+                        ].map(({ label, mins }) => (
+                          <button
+                            key={mins}
+                            onClick={() => {
+                              const start = displayTask.startDate ? new Date(displayTask.startDate) : new Date()
+                              const end = addMinutes(start, mins)
+                              handleUpdate({
+                                startDate: displayTask.startDate || start,
+                                dueDate: end
+                              })
+                            }}
+                            className="px-2.5 py-1 text-xs font-medium border border-gray-200 rounded-md hover:bg-gray-50 hover:border-gray-300 transition-colors"
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 清除所有時間 */}
+                    {(displayTask.startDate || displayTask.dueDate) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full text-destructive hover:text-destructive mt-2"
+                        onClick={() => handleUpdate({ startDate: undefined, dueDate: undefined })}
+                      >
+                        清除所有時間
+                      </Button>
+                    )}
+                  </div>
                 </PopoverContent>
               </Popover>
 
