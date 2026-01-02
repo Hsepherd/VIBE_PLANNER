@@ -7,6 +7,8 @@ import { AuthProvider } from '@/components/AuthProvider'
 import { ChatSessionProvider } from '@/lib/ChatSessionContext'
 import { AutoSync } from '@/components/AutoSync'
 import { Toaster } from '@/components/ui/sonner'
+import CommandMenu from '@/components/command/CommandMenu'
+import KeyboardShortcutsProvider from '@/components/KeyboardShortcutsProvider'
 
 // 公開頁面不需要顯示側邊欄
 const publicPaths = ['/login', '/signup', '/auth/callback']
@@ -35,6 +37,8 @@ export default function ClientLayout({
       <ChatSessionProvider>
         <AutoSync />
         <Toaster position="bottom-right" richColors closeButton />
+        <CommandMenu />
+        <KeyboardShortcutsProvider>
         <div className="flex h-screen">
           {/* 桌面版側邊欄 */}
           <Sidebar />
@@ -62,6 +66,7 @@ export default function ClientLayout({
             </div>
           </main>
         </div>
+        </KeyboardShortcutsProvider>
       </ChatSessionProvider>
     </AuthProvider>
   )

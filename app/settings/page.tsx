@@ -5,8 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { useAppStore, type AppState, type ApiUsageRecord } from '@/lib/store'
 import { Trash2, Download, AlertTriangle, DollarSign, Cloud, CheckCircle2 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, Suspense } from 'react'
 import { LearningStatus, BasePromptViewer } from '@/components/preferences'
+import GoogleCalendarConnect from '@/components/settings/GoogleCalendarConnect'
 
 export default function SettingsPage() {
   const clearMessages = useAppStore((state: AppState) => state.clearMessages)
@@ -81,6 +82,11 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Google Calendar 整合 */}
+        <Suspense fallback={<div className="animate-pulse h-48 bg-muted rounded-lg" />}>
+          <GoogleCalendarConnect />
+        </Suspense>
 
         {/* API 花費統計 */}
         <Card>

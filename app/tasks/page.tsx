@@ -2790,7 +2790,7 @@ export default function TasksPage() {
       {/* 狀態佔位 */}
       <div className="w-8 h-10 shrink-0" />
       {/* 任務名稱 - 可點擊排序 */}
-      <div className="flex-1 min-w-0 h-10 flex items-center pr-4">
+      <div className="flex-1 min-w-[100px] h-10 flex items-center pr-4">
         <button
           onClick={() => setSecondarySort('title')}
           className={`flex items-center gap-1 hover:text-gray-900 transition-colors ${secondarySort.field === 'title' ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
