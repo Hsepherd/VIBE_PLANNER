@@ -95,7 +95,7 @@ type SortMode = 'priority' | 'dueDate' | 'assignee' | 'tag' | 'group' | 'project
 
 // 二次排序欄位
 type SecondarySort = {
-  field: 'title' | 'assignee' | 'startDate' | 'dueDate' | 'priority' | null
+  field: 'title' | 'assignee' | 'startDate' | 'dueDate' | 'priority' | 'project' | 'createdAt' | null
   direction: 'asc' | 'desc'
 }
 
@@ -1181,6 +1181,10 @@ export default function TasksPage() {
   const [assigneeFilter, setAssigneeFilter] = useState<string | null>(null)
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
   const [projectFilter, setProjectFilter] = useState<string | null>(null)
+  const [priorityFilter, setPriorityFilter] = useState<string | null>(null)
+  const [startDateFilter, setStartDateFilter] = useState<string | null>(null)
+  const [dueDateFilter, setDueDateFilter] = useState<string | null>(null)
+  const [createdAtFilter, setCreatedAtFilter] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
   // 從 localStorage 初始化排序模式
@@ -1345,6 +1349,36 @@ export default function TasksPage() {
       // 專案過濾
       if (projectFilter && task.projectId !== projectFilter) return false
 
+      // 優先級過濾
+      if (priorityFilter && task.priority !== priorityFilter) return false
+
+      // 開始日期過濾
+      if (startDateFilter) {
+        if (startDateFilter === 'has_date' && !task.startDate) return false
+        if (startDateFilter === 'no_date' && task.startDate) return false
+      }
+
+      // 截止日期過濾
+      if (dueDateFilter) {
+        if (dueDateFilter === 'has_date' && !task.dueDate) return false
+        if (dueDateFilter === 'no_date' && task.dueDate) return false
+      }
+
+      // 加入日期過濾
+      if (createdAtFilter) {
+        const createdDate = new Date(task.createdAt)
+        const today = startOfDay(new Date())
+        if (createdAtFilter === 'today' && createdDate < today) return false
+        if (createdAtFilter === 'this_week') {
+          const weekAgo = addDays(today, -7)
+          if (createdDate < weekAgo) return false
+        }
+        if (createdAtFilter === 'this_month') {
+          const monthAgo = addDays(today, -30)
+          if (createdDate < monthAgo) return false
+        }
+      }
+
       // 搜尋過濾
       if (query) {
         const titleMatch = task.title.toLowerCase().includes(query)
@@ -1364,7 +1398,7 @@ export default function TasksPage() {
 
       return true
     })
-  }, [tasks, filter, tagFilter, assigneeFilter, groupFilter, projectFilter, searchQuery])
+  }, [tasks, filter, tagFilter, assigneeFilter, groupFilter, projectFilter, priorityFilter, startDateFilter, dueDateFilter, createdAtFilter, searchQuery])
 
   const completedTasks = useMemo(() => tasks.filter((t: Task) => t.status === 'completed'), [tasks])
 
@@ -1401,11 +1435,21 @@ export default function TasksPage() {
           const prioB = priorityOrder[b.priority as keyof typeof priorityOrder] ?? 4
           comparison = prioA - prioB
           break
+        case 'project':
+          const projectA = a.projectId ? (projects.find(p => p.id === a.projectId)?.name || '') : ''
+          const projectB = b.projectId ? (projects.find(p => p.id === b.projectId)?.name || '') : ''
+          comparison = projectA.localeCompare(projectB, 'zh-TW')
+          break
+        case 'createdAt':
+          const createdA = new Date(a.createdAt).getTime()
+          const createdB = new Date(b.createdAt).getTime()
+          comparison = createdA - createdB
+          break
       }
 
       return secondarySort.direction === 'asc' ? comparison : -comparison
     })
-  }, [secondarySort])
+  }, [secondarySort, projects])
 
   // 取得所有使用中的標籤
   const usedTags = useMemo(() => {
@@ -2726,13 +2770,13 @@ export default function TasksPage() {
   const isPartiallySelected = selectedTaskIds.size > 0 && selectedTaskIds.size < totalSelectableTasks
 
   // 欄位設定
-  const columnConfig: Record<string, { label: string; icon: React.ReactNode; sortable?: boolean; sortField?: 'assignee' | 'startDate' | 'dueDate' | 'priority' }> = {
+  const columnConfig: Record<string, { label: string; icon: React.ReactNode; sortable?: boolean; sortField?: 'assignee' | 'startDate' | 'dueDate' | 'priority' | 'project' | 'createdAt' }> = {
     assignee: { label: '負責人', icon: <User className="h-4 w-4 shrink-0 mr-1" />, sortable: true, sortField: 'assignee' },
     startDate: { label: '開始日', icon: <CalendarDays className="h-4 w-4 shrink-0 mr-1" />, sortable: true, sortField: 'startDate' },
     dueDate: { label: '截止日', icon: <Calendar className="h-4 w-4 shrink-0 mr-1" />, sortable: true, sortField: 'dueDate' },
     priority: { label: '優先級', icon: null, sortable: true, sortField: 'priority' },
-    project: { label: '專案', icon: <FolderKanban className="h-4 w-4 shrink-0 mr-1" />, sortable: false },
-    createdAt: { label: '加入日期', icon: <Clock className="h-4 w-4 shrink-0 mr-1" />, sortable: false },
+    project: { label: '專案', icon: <FolderKanban className="h-4 w-4 shrink-0 mr-1" />, sortable: true, sortField: 'project' },
+    createdAt: { label: '加入日期', icon: <Clock className="h-4 w-4 shrink-0 mr-1" />, sortable: true, sortField: 'createdAt' },
   }
 
   // 欄位拖曳狀態
@@ -2810,36 +2854,175 @@ export default function TasksPage() {
         if (!config) return null
         const width = columnWidths[colKey as keyof typeof columnWidths]
 
+        // 判斷是否有篩選
+        const hasFilter = (
+          (colKey === 'assignee' && assigneeFilter) ||
+          (colKey === 'priority' && priorityFilter) ||
+          (colKey === 'startDate' && startDateFilter) ||
+          (colKey === 'dueDate' && dueDateFilter) ||
+          (colKey === 'project' && projectFilter) ||
+          (colKey === 'createdAt' && createdAtFilter)
+        )
+
         return (
           <div
             key={colKey}
-            className={`h-10 flex items-center px-3 shrink-0 relative cursor-grab active:cursor-grabbing ${draggingColumn === colKey ? 'opacity-50 bg-blue-100' : ''}`}
+            className={`h-10 flex items-center px-3 shrink-0 relative ${draggingColumn === colKey ? 'opacity-50 bg-blue-100' : ''}`}
             style={{ width }}
-            draggable
-            onDragStart={(e) => handleColumnDragStart(e, colKey)}
-            onDragOver={(e) => handleColumnDragOver(e, colKey)}
-            onDragEnd={handleColumnDragEnd}
           >
             <ResizeHandle column={colKey} />
-            {config.sortable && config.sortField ? (
-              <button
-                onClick={() => setSecondarySort(config.sortField!)}
-                className={`flex items-center gap-1 hover:text-gray-900 transition-colors ${secondarySort.field === config.sortField ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
-              >
-                {config.icon}
-                {config.label}
-                {secondarySort.field === config.sortField && (
-                  secondarySort.direction === 'asc'
-                    ? <ChevronUp className="h-3 w-3 ml-1" />
-                    : <ChevronUp className="h-3 w-3 ml-1 rotate-180" />
-                )}
-              </button>
-            ) : (
-              <span className="flex items-center gap-1 text-gray-500">
-                {config.icon}
-                {config.label}
-              </span>
-            )}
+            <div
+              className="cursor-grab active:cursor-grabbing flex-1"
+              draggable
+              onDragStart={(e) => handleColumnDragStart(e, colKey)}
+              onDragOver={(e) => handleColumnDragOver(e, colKey)}
+              onDragEnd={handleColumnDragEnd}
+            >
+              {config.sortable && config.sortField ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      className={`flex items-center gap-1 hover:text-gray-900 transition-colors w-full ${secondarySort.field === config.sortField || hasFilter ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
+                    >
+                      {config.icon}
+                      {config.label}
+                      {hasFilter && <Filter className="h-3 w-3 text-blue-600" />}
+                      {secondarySort.field === config.sortField && (
+                        secondarySort.direction === 'asc'
+                          ? <ChevronUp className="h-3 w-3 ml-1" />
+                          : <ChevronUp className="h-3 w-3 ml-1 rotate-180" />
+                      )}
+                      {!secondarySort.field || secondarySort.field !== config.sortField ? (
+                        <ChevronsUpDown className="h-3 w-3 ml-1 opacity-50" />
+                      ) : null}
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-56">
+                    {/* 排序選項 */}
+                    <div className="px-2 py-1.5 text-xs font-semibold text-gray-500">排序</div>
+                    <DropdownMenuItem onClick={() => setSecondarySort(config.sortField!)}>
+                      <ChevronUp className="h-4 w-4 mr-2" />
+                      升序排列
+                      {secondarySort.field === config.sortField && secondarySort.direction === 'asc' && (
+                        <Check className="h-4 w-4 ml-auto" />
+                      )}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => {
+                      setSecondarySortState({ field: config.sortField!, direction: 'desc' })
+                      localStorage.setItem('vibe-planner-task-secondary-sort', JSON.stringify({ field: config.sortField!, direction: 'desc' }))
+                    }}>
+                      <ChevronUp className="h-4 w-4 mr-2 rotate-180" />
+                      降序排列
+                      {secondarySort.field === config.sortField && secondarySort.direction === 'desc' && (
+                        <Check className="h-4 w-4 ml-auto" />
+                      )}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    {/* 篩選選項 */}
+                    <div className="px-2 py-1.5 text-xs font-semibold text-gray-500">篩選</div>
+                    {colKey === 'assignee' && (
+                      <>
+                        <DropdownMenuItem onClick={() => setAssigneeFilter(null)} className={!assigneeFilter ? 'bg-muted' : ''}>
+                          全部負責人
+                          {!assigneeFilter && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                        {usedAssignees.map(assignee => (
+                          <DropdownMenuItem key={assignee} onClick={() => setAssigneeFilter(assignee)} className={assigneeFilter === assignee ? 'bg-muted' : ''}>
+                            {assignee}
+                            {assigneeFilter === assignee && <Check className="h-4 w-4 ml-auto" />}
+                          </DropdownMenuItem>
+                        ))}
+                      </>
+                    )}
+                    {colKey === 'priority' && (
+                      <>
+                        <DropdownMenuItem onClick={() => setPriorityFilter(null)} className={!priorityFilter ? 'bg-muted' : ''}>
+                          全部優先級
+                          {!priorityFilter && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                        {(['urgent', 'high', 'medium', 'low'] as const).map(priority => (
+                          <DropdownMenuItem key={priority} onClick={() => setPriorityFilter(priority)} className={priorityFilter === priority ? 'bg-muted' : ''}>
+                            {priorityConfig[priority].emoji} {priorityConfig[priority].label}
+                            {priorityFilter === priority && <Check className="h-4 w-4 ml-auto" />}
+                          </DropdownMenuItem>
+                        ))}
+                      </>
+                    )}
+                    {colKey === 'startDate' && (
+                      <>
+                        <DropdownMenuItem onClick={() => setStartDateFilter(null)} className={!startDateFilter ? 'bg-muted' : ''}>
+                          全部
+                          {!startDateFilter && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setStartDateFilter('has_date')} className={startDateFilter === 'has_date' ? 'bg-muted' : ''}>
+                          有開始日期
+                          {startDateFilter === 'has_date' && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setStartDateFilter('no_date')} className={startDateFilter === 'no_date' ? 'bg-muted' : ''}>
+                          無開始日期
+                          {startDateFilter === 'no_date' && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                    {colKey === 'dueDate' && (
+                      <>
+                        <DropdownMenuItem onClick={() => setDueDateFilter(null)} className={!dueDateFilter ? 'bg-muted' : ''}>
+                          全部
+                          {!dueDateFilter && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setDueDateFilter('has_date')} className={dueDateFilter === 'has_date' ? 'bg-muted' : ''}>
+                          有截止日期
+                          {dueDateFilter === 'has_date' && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setDueDateFilter('no_date')} className={dueDateFilter === 'no_date' ? 'bg-muted' : ''}>
+                          無截止日期
+                          {dueDateFilter === 'no_date' && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                    {colKey === 'project' && (
+                      <>
+                        <DropdownMenuItem onClick={() => setProjectFilter(null)} className={!projectFilter ? 'bg-muted' : ''}>
+                          全部專案
+                          {!projectFilter && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                        {projects.filter(p => p.status === 'active').map(project => (
+                          <DropdownMenuItem key={project.id} onClick={() => setProjectFilter(project.id)} className={projectFilter === project.id ? 'bg-muted' : ''}>
+                            {project.name}
+                            {projectFilter === project.id && <Check className="h-4 w-4 ml-auto" />}
+                          </DropdownMenuItem>
+                        ))}
+                      </>
+                    )}
+                    {colKey === 'createdAt' && (
+                      <>
+                        <DropdownMenuItem onClick={() => setCreatedAtFilter(null)} className={!createdAtFilter ? 'bg-muted' : ''}>
+                          全部
+                          {!createdAtFilter && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setCreatedAtFilter('today')} className={createdAtFilter === 'today' ? 'bg-muted' : ''}>
+                          今天加入
+                          {createdAtFilter === 'today' && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setCreatedAtFilter('this_week')} className={createdAtFilter === 'this_week' ? 'bg-muted' : ''}>
+                          本週加入
+                          {createdAtFilter === 'this_week' && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setCreatedAtFilter('this_month')} className={createdAtFilter === 'this_month' ? 'bg-muted' : ''}>
+                          本月加入
+                          {createdAtFilter === 'this_month' && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <span className="flex items-center gap-1 text-gray-500">
+                  {config.icon}
+                  {config.label}
+                </span>
+              )}
+            </div>
           </div>
         )
       })}
