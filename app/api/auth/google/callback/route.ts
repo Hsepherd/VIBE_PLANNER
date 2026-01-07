@@ -2,14 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { getTokensFromCode, getUserInfo } from '@/lib/google'
 
-// 建立 Supabase 客戶端（使用 service role 來寫入資料）
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
-
 // GET: 處理 Google OAuth 回調
 export async function GET(request: NextRequest) {
+  // 建立 Supabase 客戶端（在 runtime 建立以確保環境變數已載入）
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  )
   try {
     const searchParams = request.nextUrl.searchParams
     const code = searchParams.get('code')
