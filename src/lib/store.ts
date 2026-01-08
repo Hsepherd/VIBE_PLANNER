@@ -88,8 +88,9 @@ export interface AppState {
 
   // API 使用量
   apiUsage: ApiUsageRecord[]
-  addApiUsage: (usage: { model: string; promptTokens: number; completionTokens: number }) => void
-  clearApiUsage: () => void
+  addApiUsage: (usage: { model: string; promptTokens: number; completionTokens: number }) => Promise<void>
+  loadApiUsage: () => Promise<void>
+  clearApiUsage: () => Promise<void>
 
   // UI 狀態
   isLoading: boolean
@@ -366,29 +367,68 @@ export const useAppStore = create<AppState>()(
 
       // API 使用量
       apiUsage: [],
-      addApiUsage: ({ model, promptTokens, completionTokens }) =>
-        set((state) => {
-          const pricing = PRICING[model as keyof typeof PRICING] || PRICING['gpt-4.1']
-          const cost =
-            (promptTokens / 1_000_000) * pricing.input +
-            (completionTokens / 1_000_000) * pricing.output
+      addApiUsage: async ({ model, promptTokens, completionTokens }) => {
+        const pricing = PRICING[model as keyof typeof PRICING] || PRICING['gpt-4.1']
+        const cost =
+          (promptTokens / 1_000_000) * pricing.input +
+          (completionTokens / 1_000_000) * pricing.output
 
-          return {
-            apiUsage: [
-              ...state.apiUsage,
-              {
-                id: generateId(),
-                timestamp: new Date(),
-                model,
-                promptTokens,
-                completionTokens,
-                totalTokens: promptTokens + completionTokens,
-                cost,
-              },
-            ],
-          }
-        }),
-      clearApiUsage: () => set({ apiUsage: [] }),
+        const newRecord = {
+          id: generateId(),
+          timestamp: new Date(),
+          model,
+          promptTokens,
+          completionTokens,
+          totalTokens: promptTokens + completionTokens,
+          cost,
+        }
+
+        // 更新本地狀態
+        set((state) => ({
+          apiUsage: [...state.apiUsage, newRecord],
+        }))
+
+        // 同步到 Supabase
+        try {
+          const { apiUsageApi } = await import('./supabase-api')
+          await apiUsageApi.create({
+            model,
+            prompt_tokens: promptTokens,
+            completion_tokens: completionTokens,
+            total_tokens: promptTokens + completionTokens,
+            cost,
+          })
+        } catch (error) {
+          console.error('同步 API 使用量失敗:', error)
+        }
+      },
+      loadApiUsage: async () => {
+        try {
+          const { apiUsageApi } = await import('./supabase-api')
+          const records = await apiUsageApi.getAll()
+          const localRecords = records.map((r) => ({
+            id: r.id,
+            timestamp: new Date(r.created_at),
+            model: r.model,
+            promptTokens: r.prompt_tokens,
+            completionTokens: r.completion_tokens,
+            totalTokens: r.total_tokens,
+            cost: Number(r.cost),
+          }))
+          set({ apiUsage: localRecords })
+        } catch (error) {
+          console.error('載入 API 使用量失敗:', error)
+        }
+      },
+      clearApiUsage: async () => {
+        set({ apiUsage: [] })
+        try {
+          const { apiUsageApi } = await import('./supabase-api')
+          await apiUsageApi.clear()
+        } catch (error) {
+          console.error('清除 API 使用量失敗:', error)
+        }
+      },
 
       // UI 狀態
       isLoading: false,
@@ -522,7 +562,7 @@ export const useAppStore = create<AppState>()(
     {
       name: 'vibe-planner-storage',
       partialize: (state) => ({
-        messages: state.messages,
+        // messages 不再持久化，由 ChatSessionContext 管理
         tasks: state.tasks,
         projects: state.projects,
         apiUsage: state.apiUsage,

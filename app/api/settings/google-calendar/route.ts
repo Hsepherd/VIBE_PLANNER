@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
-import { createClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 
 // GET: 取得 Google Calendar 連接狀態
@@ -27,13 +26,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: '未登入' }, { status: 401 })
     }
 
-    // 使用 service role 讀取設定
-    const adminSupabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
-
-    const { data: settings, error } = await adminSupabase
+    // 使用普通客戶端讀取設定（透過 RLS）
+    const { data: settings, error } = await supabase
       .from('user_settings')
       .select('google_connected, google_email, calendar_sync_enabled, calendar_sync_direction, last_sync_at')
       .eq('user_id', user.id)
@@ -84,13 +78,8 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json()
     const { syncEnabled, syncDirection } = body
 
-    // 使用 service role 更新設定
-    const adminSupabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
-
-    const { error } = await adminSupabase
+    // 使用普通客戶端更新設定（透過 RLS）
+    const { error } = await supabase
       .from('user_settings')
       .update({
         calendar_sync_enabled: syncEnabled,
@@ -135,13 +124,8 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: '未登入' }, { status: 401 })
     }
 
-    // 使用 service role 更新設定
-    const adminSupabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
-
-    const { error } = await adminSupabase
+    // 使用普通客戶端更新設定（透過 RLS）
+    const { error } = await supabase
       .from('user_settings')
       .update({
         google_connected: false,

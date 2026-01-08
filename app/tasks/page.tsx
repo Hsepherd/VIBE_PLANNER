@@ -91,7 +91,7 @@ import {
   Clock,
 } from 'lucide-react'
 
-type SortMode = 'priority' | 'dueDate' | 'assignee' | 'tag' | 'group' | 'project'
+type SortMode = 'priority' | 'dueDate' | 'assignee' | 'tag' | 'group' | 'project' | 'createdAt'
 
 // 二次排序欄位
 type SecondarySort = {
@@ -1185,6 +1185,7 @@ export default function TasksPage() {
   const [startDateFilter, setStartDateFilter] = useState<string | null>(null)
   const [dueDateFilter, setDueDateFilter] = useState<string | null>(null)
   const [createdAtFilter, setCreatedAtFilter] = useState<string | null>(null)
+  const [createdAtDate, setCreatedAtDate] = useState<Date | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
   // 從 localStorage 初始化排序模式
@@ -1262,6 +1263,12 @@ export default function TasksPage() {
       setShowUndoButton(false)
     }, 5000)
   }, [])
+
+  // 任務列表專案選擇器狀態
+  const [showInlineProjectManager, setShowInlineProjectManager] = useState(false)
+  const [newInlineProjectName, setNewInlineProjectName] = useState('')
+  const [isAddingInlineProject, setIsAddingInlineProject] = useState(false)
+  const [currentEditingTaskId, setCurrentEditingTaskId] = useState<string | null>(null)
 
   // 團隊成員
   const [teamMembers, setTeamMembers] = useState<string[]>([])
@@ -1366,9 +1373,10 @@ export default function TasksPage() {
 
       // 加入日期過濾
       if (createdAtFilter) {
-        const createdDate = new Date(task.createdAt)
+        const createdDate = startOfDay(new Date(task.createdAt))
         const today = startOfDay(new Date())
-        if (createdAtFilter === 'today' && createdDate < today) return false
+
+        if (createdAtFilter === 'today' && createdDate.getTime() !== today.getTime()) return false
         if (createdAtFilter === 'this_week') {
           const weekAgo = addDays(today, -7)
           if (createdDate < weekAgo) return false
@@ -1376,6 +1384,10 @@ export default function TasksPage() {
         if (createdAtFilter === 'this_month') {
           const monthAgo = addDays(today, -30)
           if (createdDate < monthAgo) return false
+        }
+        if (createdAtFilter === 'specific_date' && createdAtDate) {
+          const targetDate = startOfDay(createdAtDate)
+          if (createdDate.getTime() !== targetDate.getTime()) return false
         }
       }
 
@@ -1594,6 +1606,62 @@ export default function TasksPage() {
     })
     return groups
   }, [filteredTasks])
+
+  // 按加入日期分組
+  const groupedByCreatedAt = useMemo(() => {
+    const groups: Record<string, Task[]> = {}
+
+    filteredTasks.forEach((task: Task) => {
+      let key: string
+
+      if (!task.createdAt) {
+        key = 'noCreatedAt'
+      } else {
+        const created = startOfDay(new Date(task.createdAt))
+
+        if (isToday(created)) {
+          key = 'today'
+        } else if (created.getTime() === addDays(today, -1).getTime()) {
+          key = 'yesterday'
+        } else if (created >= addDays(today, -7)) {
+          key = 'thisWeek'
+        } else if (created >= addDays(today, -30)) {
+          key = 'thisMonth'
+        } else {
+          // 使用實際日期作為 key，格式：date_2025-01-01
+          key = `date_${format(created, 'yyyy-MM-dd')}`
+        }
+      }
+
+      if (!groups[key]) groups[key] = []
+      groups[key].push(task)
+    })
+
+    return groups
+  }, [filteredTasks, today])
+
+  // 產生加入日期分組的標籤
+  const createdAtLabels = useMemo(() => {
+    const labels: Record<string, { emoji?: string; label: string; className?: string }> = {
+      today: { emoji: '🆕', label: '今天', className: 'text-green-600 dark:text-green-400' },
+      yesterday: { emoji: '📅', label: '昨天', className: 'text-blue-600 dark:text-blue-400' },
+      thisWeek: { emoji: '📆', label: '本週', className: 'text-purple-600 dark:text-purple-400' },
+      thisMonth: { emoji: '🗓️', label: '本月', className: 'text-orange-600 dark:text-orange-400' },
+      noCreatedAt: { emoji: '📝', label: '未知', className: 'text-muted-foreground' },
+    }
+
+    // 動態產生日期標籤
+    Object.keys(groupedByCreatedAt).forEach(key => {
+      if (key.startsWith('date_')) {
+        const dateStr = key.replace('date_', '')
+        const date = new Date(dateStr)
+        const dateLabel = format(date, 'yyyy/M/d (EEEE)', { locale: zhTW })
+        labels[key] = { emoji: '📝', label: dateLabel }
+      }
+    })
+
+    return labels
+  }, [groupedByCreatedAt])
 
   // 依專案分組（使用專案 ID 作為 key，方便拖曳識別）
   const groupedByProject = useMemo(() => {
@@ -2356,22 +2424,106 @@ export default function TasksPage() {
           if (colKey === 'project') {
             return (
               <div key={colKey} className="h-12 flex items-center shrink-0" style={{ width }}>
-                <DropdownMenu open={projectOpen} onOpenChange={setProjectOpen}>
+                <DropdownMenu open={projectOpen} onOpenChange={(open) => {
+                  setProjectOpen(open)
+                  if (!open) {
+                    setShowInlineProjectManager(false)
+                    setNewInlineProjectName('')
+                    setCurrentEditingTaskId(null)
+                  }
+                }}>
                   <DropdownMenuTrigger asChild>
                     <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
                       <FolderKanban className="h-4 w-4 shrink-0 text-violet-500" />
                       <span className="flex-1 text-left truncate">{getProjectName(task.projectId) || '-'}</span>
                     </button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-40">
-                    {projects.filter(p => p.status === 'active').map((project) => (
-                      <DropdownMenuItem key={project.id} onClick={() => handleUpdateTask(task.id, { projectId: project.id })} className="text-xs">
-                        <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />{project.name}
-                        {task.projectId === project.id && <Check className="h-3 w-3 ml-auto" />}
-                      </DropdownMenuItem>
-                    ))}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { projectId: undefined })}>清除專案</DropdownMenuItem>
+                  <DropdownMenuContent align="start" className="w-56">
+                    {showInlineProjectManager && currentEditingTaskId === task.id ? (
+                      <div className="p-3 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-medium text-sm">新增專案</h4>
+                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => {
+                            setShowInlineProjectManager(false)
+                            setNewInlineProjectName('')
+                            setCurrentEditingTaskId(null)
+                          }}>
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <div className="flex gap-2">
+                          <Input
+                            value={newInlineProjectName}
+                            onChange={(e) => setNewInlineProjectName(e.target.value)}
+                            placeholder="專案名稱..."
+                            className="h-8 text-sm flex-1"
+                            autoFocus
+                            onKeyDown={async (e) => {
+                              if (e.key === 'Enter' && newInlineProjectName.trim()) {
+                                e.preventDefault()
+                                setIsAddingInlineProject(true)
+                                const newProject = await handleAddProject(newInlineProjectName.trim())
+                                if (newProject) {
+                                  handleUpdateTask(task.id, { projectId: newProject.id })
+                                }
+                                setNewInlineProjectName('')
+                                setShowInlineProjectManager(false)
+                                setIsAddingInlineProject(false)
+                                setCurrentEditingTaskId(null)
+                                setProjectOpen(false)
+                              }
+                            }}
+                          />
+                          <Button
+                            size="sm"
+                            className="h-8"
+                            disabled={!newInlineProjectName.trim() || isAddingInlineProject}
+                            onClick={async () => {
+                              if (newInlineProjectName.trim()) {
+                                setIsAddingInlineProject(true)
+                                const newProject = await handleAddProject(newInlineProjectName.trim())
+                                if (newProject) {
+                                  handleUpdateTask(task.id, { projectId: newProject.id })
+                                }
+                                setNewInlineProjectName('')
+                                setShowInlineProjectManager(false)
+                                setIsAddingInlineProject(false)
+                                setCurrentEditingTaskId(null)
+                                setProjectOpen(false)
+                              }
+                            }}
+                          >
+                            {isAddingInlineProject ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        {projects.filter(p => p.status === 'active').map((project) => (
+                          <DropdownMenuItem key={project.id} onClick={() => handleUpdateTask(task.id, { projectId: project.id })} className="text-xs">
+                            <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />{project.name}
+                            {task.projectId === project.id && <Check className="h-3 w-3 ml-auto" />}
+                          </DropdownMenuItem>
+                        ))}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { projectId: undefined })}>
+                          <X className="h-4 w-4 mr-2" />
+                          清除專案
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onSelect={(e) => {
+                            e.preventDefault()
+                            setShowInlineProjectManager(true)
+                            setCurrentEditingTaskId(task.id)
+                          }}
+                          className="text-xs text-primary"
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          新增專案...
+                        </DropdownMenuItem>
+                      </>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
@@ -2451,7 +2603,14 @@ export default function TasksPage() {
                 </DropdownMenuContent>
               </DropdownMenu>
               {/* 專案 */}
-              <DropdownMenu open={projectOpen} onOpenChange={setProjectOpen}>
+              <DropdownMenu open={projectOpen} onOpenChange={(open) => {
+                setProjectOpen(open)
+                if (!open) {
+                  setShowInlineProjectManager(false)
+                  setNewInlineProjectName('')
+                  setCurrentEditingTaskId(null)
+                }
+              }}>
                 <DropdownMenuTrigger asChild>
                   <button className="flex items-center w-full px-2 py-1.5 text-xs hover:bg-gray-100 rounded">
                     <FolderKanban className="h-3.5 w-3.5 mr-2" />
@@ -2459,15 +2618,92 @@ export default function TasksPage() {
                     <ChevronRight className="h-3 w-3 ml-auto" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent side="left" className="w-40">
-                  {projects.filter(p => p.status === 'active').map((project) => (
-                    <DropdownMenuItem key={project.id} onClick={() => handleUpdateTask(task.id, { projectId: project.id })} className="text-xs">
-                      <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />{project.name}
-                      {task.projectId === project.id && <Check className="h-3 w-3 ml-auto" />}
-                    </DropdownMenuItem>
-                  ))}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { projectId: undefined })}>清除專案</DropdownMenuItem>
+                <DropdownMenuContent side="left" className="w-56">
+                  {showInlineProjectManager && currentEditingTaskId === task.id ? (
+                    <div className="p-3 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-medium text-sm">新增專案</h4>
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => {
+                          setShowInlineProjectManager(false)
+                          setNewInlineProjectName('')
+                          setCurrentEditingTaskId(null)
+                        }}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          value={newInlineProjectName}
+                          onChange={(e) => setNewInlineProjectName(e.target.value)}
+                          placeholder="專案名稱..."
+                          className="h-8 text-sm flex-1"
+                          autoFocus
+                          onKeyDown={async (e) => {
+                            if (e.key === 'Enter' && newInlineProjectName.trim()) {
+                              e.preventDefault()
+                              setIsAddingInlineProject(true)
+                              const newProject = await handleAddProject(newInlineProjectName.trim())
+                              if (newProject) {
+                                handleUpdateTask(task.id, { projectId: newProject.id })
+                              }
+                              setNewInlineProjectName('')
+                              setShowInlineProjectManager(false)
+                              setIsAddingInlineProject(false)
+                              setCurrentEditingTaskId(null)
+                              setProjectOpen(false)
+                            }
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          className="h-8"
+                          disabled={!newInlineProjectName.trim() || isAddingInlineProject}
+                          onClick={async () => {
+                            if (newInlineProjectName.trim()) {
+                              setIsAddingInlineProject(true)
+                              const newProject = await handleAddProject(newInlineProjectName.trim())
+                              if (newProject) {
+                                handleUpdateTask(task.id, { projectId: newProject.id })
+                              }
+                              setNewInlineProjectName('')
+                              setShowInlineProjectManager(false)
+                              setIsAddingInlineProject(false)
+                              setCurrentEditingTaskId(null)
+                              setProjectOpen(false)
+                            }
+                          }}
+                        >
+                          {isAddingInlineProject ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {projects.filter(p => p.status === 'active').map((project) => (
+                        <DropdownMenuItem key={project.id} onClick={() => handleUpdateTask(task.id, { projectId: project.id })} className="text-xs">
+                          <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />{project.name}
+                          {task.projectId === project.id && <Check className="h-3 w-3 ml-auto" />}
+                        </DropdownMenuItem>
+                      ))}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { projectId: undefined })}>
+                        <X className="h-4 w-4 mr-2" />
+                        清除專案
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={(e) => {
+                          e.preventDefault()
+                          setShowInlineProjectManager(true)
+                          setCurrentEditingTaskId(task.id)
+                        }}
+                        className="text-xs text-primary"
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        新增專案...
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
               <DropdownMenuSeparator />
@@ -2996,7 +3232,7 @@ export default function TasksPage() {
                     )}
                     {colKey === 'createdAt' && (
                       <>
-                        <DropdownMenuItem onClick={() => setCreatedAtFilter(null)} className={!createdAtFilter ? 'bg-muted' : ''}>
+                        <DropdownMenuItem onClick={() => { setCreatedAtFilter(null); setCreatedAtDate(null) }} className={!createdAtFilter ? 'bg-muted' : ''}>
                           全部
                           {!createdAtFilter && <Check className="h-4 w-4 ml-auto" />}
                         </DropdownMenuItem>
@@ -3012,6 +3248,28 @@ export default function TasksPage() {
                           本月加入
                           {createdAtFilter === 'this_month' && <Check className="h-4 w-4 ml-auto" />}
                         </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <div className="p-2">
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button variant="outline" className="w-full justify-start text-left font-normal">
+                                <Calendar className="h-4 w-4 mr-2" />
+                                {createdAtDate ? format(createdAtDate, 'yyyy/MM/dd', { locale: zhTW }) : '選擇特定日期'}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="start">
+                              <CalendarComponent
+                                mode="single"
+                                selected={createdAtDate || undefined}
+                                onSelect={(date) => {
+                                  setCreatedAtDate(date || null)
+                                  if (date) setCreatedAtFilter('specific_date')
+                                }}
+                                initialFocus
+                              />
+                            </PopoverContent>
+                          </Popover>
+                        </div>
                       </>
                     )}
                   </DropdownMenuContent>
@@ -3053,7 +3311,7 @@ export default function TasksPage() {
     })
 
     return (
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
         {/* 表格標題列 */}
         <TableHeader />
 
@@ -3183,7 +3441,7 @@ export default function TasksPage() {
     const activeTask = activeTaskId ? tasks.find(t => t.id === activeTaskId) : null
 
     return (
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
         {/* 表格標題列 */}
         <TableHeader />
 
@@ -3395,7 +3653,7 @@ export default function TasksPage() {
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-md hover:bg-gray-50 transition-colors">
                   <LayoutGrid className="h-3.5 w-3.5" />
-                  分類：{sortMode === 'priority' ? '優先級' : sortMode === 'dueDate' ? '截止日' : sortMode === 'assignee' ? '負責人' : sortMode === 'tag' ? '標籤' : sortMode === 'project' ? '專案' : '組別'}
+                  分類：{sortMode === 'priority' ? '優先級' : sortMode === 'dueDate' ? '截止日' : sortMode === 'assignee' ? '負責人' : sortMode === 'tag' ? '標籤' : sortMode === 'project' ? '專案' : sortMode === 'createdAt' ? '加入日期' : '組別'}
                   <ChevronDown className="h-3.5 w-3.5" />
                 </button>
               </DropdownMenuTrigger>
@@ -3404,6 +3662,11 @@ export default function TasksPage() {
                   <Calendar className="h-4 w-4 mr-2" />
                   截止日
                   {sortMode === 'dueDate' && <Check className="h-4 w-4 ml-auto" />}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSortMode('createdAt')}>
+                  <Clock className="h-4 w-4 mr-2" />
+                  加入日期
+                  {sortMode === 'createdAt' && <Check className="h-4 w-4 ml-auto" />}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setSortMode('priority')}>
                   <AlertCircle className="h-4 w-4 mr-2" />
@@ -3528,6 +3791,8 @@ export default function TasksPage() {
         {/* 任務列表 */}
         <div className="space-y-6">
           {sortMode === 'dueDate' && renderGroupedTasks(groupedByDueDate, dueDateLabels)}
+
+          {sortMode === 'createdAt' && renderGroupedTasks(groupedByCreatedAt, createdAtLabels)}
 
           {sortMode === 'priority' && renderGroupedTasks(groupedByPriority, {
             urgent: { emoji: '🔴', label: '緊急', className: 'text-destructive' },

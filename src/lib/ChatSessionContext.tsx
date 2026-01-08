@@ -86,18 +86,13 @@ export function ChatSessionProvider({ children }: { children: ReactNode }) {
       const localSessions = dbSessions.map(dbSessionToLocal)
       setSessions(localSessions)
 
-      // 如果有 sessions 且目前沒有選中的，選中最新的
-      if (localSessions.length > 0 && !currentSessionId) {
-        const latestSession = localSessions[0]
-        setCurrentSessionId(latestSession.id)
-        await loadSessionMessages(latestSession.id)
-      }
+      // 不自動載入最新對話，保持空白狀態讓用戶選擇
     } catch (error) {
       console.error('載入對話列表失敗:', error)
     } finally {
       setIsLoading(false)
     }
-  }, [user, currentSessionId, loadSessionMessages])
+  }, [user])
 
   // 切換 session
   const switchSession = useCallback(async (sessionId: string) => {

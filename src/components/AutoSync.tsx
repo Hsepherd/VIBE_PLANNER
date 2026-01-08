@@ -18,10 +18,9 @@ export function AutoSync() {
       try {
         console.log('[AutoSync] 開始從 Supabase 同步資料...')
 
-        const [projects, tasks, conversations, apiUsage] = await Promise.all([
+        const [projects, tasks, apiUsage] = await Promise.all([
           projectsApi.getAll(),
           tasksApi.getAll(),
-          conversationsApi.getRecent(100),
           apiUsageApi.getAll(),
         ])
 
@@ -57,13 +56,6 @@ export function AutoSync() {
             createdAt: new Date(t.created_at),
             updatedAt: new Date(t.updated_at),
             completedAt: t.completed_at ? new Date(t.completed_at) : undefined,
-          })),
-          messages: conversations.map((c) => ({
-            id: c.id,
-            role: c.role,
-            content: c.content,
-            timestamp: new Date(c.created_at),
-            metadata: c.metadata as { tasksExtracted?: string[]; imageUrl?: string } | undefined,
           })),
           apiUsage: apiUsage.map((u) => ({
             id: u.id,
