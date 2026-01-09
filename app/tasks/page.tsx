@@ -1168,7 +1168,7 @@ function AssigneeDropdown({
 
 export default function TasksPage() {
   const { tasks, isLoading, error, addTask, updateTask, deleteTask, completeTask, refresh } = useSupabaseTasks()
-  const { projects, addProject: addProjectToDb, deleteProject: deleteProjectFromDb } = useSupabaseProjects()
+  const { projects, addProject: addProjectToDb, updateProject: updateProjectInDb, deleteProject: deleteProjectFromDb } = useSupabaseProjects()
 
   const [newTaskTitle, setNewTaskTitle] = useState('')
   const [addingInGroup, setAddingInGroup] = useState<string | null>(null) // 追蹤哪個分類正在新增任務
@@ -1265,10 +1265,21 @@ export default function TasksPage() {
   }, [])
 
   // 任務列表專案選擇器狀態
-  const [showInlineProjectManager, setShowInlineProjectManager] = useState(false)
-  const [newInlineProjectName, setNewInlineProjectName] = useState('')
-  const [isAddingInlineProject, setIsAddingInlineProject] = useState(false)
-  const [currentEditingTaskId, setCurrentEditingTaskId] = useState<string | null>(null)
+  const [showAddProjectDialog, setShowAddProjectDialog] = useState(false)
+  const [newProjectName, setNewProjectName] = useState('')
+  const [isAddingProject, setIsAddingProject] = useState(false)
+  const [addingProjectForTaskId, setAddingProjectForTaskId] = useState<string | null>(null)
+
+  // 編輯專案
+  const [showEditProjectDialog, setShowEditProjectDialog] = useState(false)
+  const [editingProject, setEditingProject] = useState<Project | null>(null)
+  const [editProjectName, setEditProjectName] = useState('')
+  const [isUpdatingProject, setIsUpdatingProject] = useState(false)
+
+  // 刪除專案
+  const [showDeleteProjectDialog, setShowDeleteProjectDialog] = useState(false)
+  const [deletingProject, setDeletingProject] = useState<Project | null>(null)
+  const [isDeletingProject, setIsDeletingProject] = useState(false)
 
   // 團隊成員
   const [teamMembers, setTeamMembers] = useState<string[]>([])
@@ -1332,6 +1343,37 @@ export default function TasksPage() {
       return null
     }
   }, [addProjectToDb])
+
+  // 編輯專案
+  const handleUpdateProject = useCallback(async (id: string, name: string): Promise<boolean> => {
+    try {
+      await updateProjectInDb(id, { name })
+      return true
+    } catch (err) {
+      console.error('更新專案失敗:', err)
+      return false
+    }
+  }, [updateProjectInDb])
+
+  // 刪除專案
+  const handleDeleteProject = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      // 檢查是否有任務使用此專案
+      const tasksUsingProject = tasks.filter(t => t.projectId === id)
+      if (tasksUsingProject.length > 0) {
+        // 先將使用此專案的任務清除專案關聯
+        await Promise.all(
+          tasksUsingProject.map(task => updateTask(task.id, { projectId: undefined }))
+        )
+      }
+      // 刪除專案
+      await deleteProjectFromDb(id)
+      return true
+    } catch (err) {
+      console.error('刪除專案失敗:', err)
+      return false
+    }
+  }, [deleteProjectFromDb, tasks, updateTask])
 
   // 過濾任務
   const filteredTasks = useMemo(() => {
@@ -2424,106 +2466,76 @@ export default function TasksPage() {
           if (colKey === 'project') {
             return (
               <div key={colKey} className="h-12 flex items-center shrink-0" style={{ width }}>
-                <DropdownMenu open={projectOpen} onOpenChange={(open) => {
-                  setProjectOpen(open)
-                  if (!open) {
-                    setShowInlineProjectManager(false)
-                    setNewInlineProjectName('')
-                    setCurrentEditingTaskId(null)
-                  }
-                }}>
+                <DropdownMenu open={projectOpen} onOpenChange={setProjectOpen}>
                   <DropdownMenuTrigger asChild>
                     <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
                       <FolderKanban className="h-4 w-4 shrink-0 text-violet-500" />
                       <span className="flex-1 text-left truncate">{getProjectName(task.projectId) || '-'}</span>
                     </button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56">
-                    {showInlineProjectManager && currentEditingTaskId === task.id ? (
-                      <div className="p-3 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h4 className="font-medium text-sm">新增專案</h4>
-                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => {
-                            setShowInlineProjectManager(false)
-                            setNewInlineProjectName('')
-                            setCurrentEditingTaskId(null)
-                          }}>
-                            <X className="h-4 w-4" />
-                          </Button>
+                  <DropdownMenuContent align="start" className="w-64">
+                    {projects.filter(p => p.status === 'active').map((project) => (
+                      <div
+                        key={project.id}
+                        className="flex items-center justify-between px-2 py-1.5 text-xs hover:bg-accent rounded-sm group"
+                      >
+                        <div
+                          className="flex items-center flex-1 cursor-pointer"
+                          onClick={() => {
+                            handleUpdateTask(task.id, { projectId: project.id })
+                            setProjectOpen(false)
+                          }}
+                        >
+                          <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />
+                          <span className="flex-1">{project.name}</span>
+                          {task.projectId === project.id && <Check className="h-3 w-3 mr-2" />}
                         </div>
-                        <div className="flex gap-2">
-                          <Input
-                            value={newInlineProjectName}
-                            onChange={(e) => setNewInlineProjectName(e.target.value)}
-                            placeholder="專案名稱..."
-                            className="h-8 text-sm flex-1"
-                            autoFocus
-                            onKeyDown={async (e) => {
-                              if (e.key === 'Enter' && newInlineProjectName.trim()) {
-                                e.preventDefault()
-                                setIsAddingInlineProject(true)
-                                const newProject = await handleAddProject(newInlineProjectName.trim())
-                                if (newProject) {
-                                  handleUpdateTask(task.id, { projectId: newProject.id })
-                                }
-                                setNewInlineProjectName('')
-                                setShowInlineProjectManager(false)
-                                setIsAddingInlineProject(false)
-                                setCurrentEditingTaskId(null)
-                                setProjectOpen(false)
-                              }
+                        <div className="flex gap-1">
+                          <button
+                            className="p-1 hover:bg-gray-200 rounded"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setEditingProject(project)
+                              setEditProjectName(project.name)
+                              setShowEditProjectDialog(true)
+                              setProjectOpen(false)
                             }}
-                          />
-                          <Button
-                            size="sm"
-                            className="h-8"
-                            disabled={!newInlineProjectName.trim() || isAddingInlineProject}
-                            onClick={async () => {
-                              if (newInlineProjectName.trim()) {
-                                setIsAddingInlineProject(true)
-                                const newProject = await handleAddProject(newInlineProjectName.trim())
-                                if (newProject) {
-                                  handleUpdateTask(task.id, { projectId: newProject.id })
-                                }
-                                setNewInlineProjectName('')
-                                setShowInlineProjectManager(false)
-                                setIsAddingInlineProject(false)
-                                setCurrentEditingTaskId(null)
-                                setProjectOpen(false)
-                              }
-                            }}
+                            title="編輯專案"
                           >
-                            {isAddingInlineProject ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                          </Button>
+                            <Pencil className="h-3 w-3 text-gray-600" />
+                          </button>
+                          <button
+                            className="p-1 hover:bg-red-100 rounded"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setDeletingProject(project)
+                              setShowDeleteProjectDialog(true)
+                              setProjectOpen(false)
+                            }}
+                            title="刪除專案"
+                          >
+                            <Trash2 className="h-3 w-3 text-red-600" />
+                          </button>
                         </div>
                       </div>
-                    ) : (
-                      <>
-                        {projects.filter(p => p.status === 'active').map((project) => (
-                          <DropdownMenuItem key={project.id} onClick={() => handleUpdateTask(task.id, { projectId: project.id })} className="text-xs">
-                            <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />{project.name}
-                            {task.projectId === project.id && <Check className="h-3 w-3 ml-auto" />}
-                          </DropdownMenuItem>
-                        ))}
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { projectId: undefined })}>
-                          <X className="h-4 w-4 mr-2" />
-                          清除專案
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onSelect={(e) => {
-                            e.preventDefault()
-                            setShowInlineProjectManager(true)
-                            setCurrentEditingTaskId(task.id)
-                          }}
-                          className="text-xs text-primary"
-                        >
-                          <Plus className="h-4 w-4 mr-2" />
-                          新增專案...
-                        </DropdownMenuItem>
-                      </>
-                    )}
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { projectId: undefined })}>
+                      <X className="h-4 w-4 mr-2" />
+                      清除專案
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-xs text-primary"
+                      onClick={() => {
+                        setAddingProjectForTaskId(task.id)
+                        setShowAddProjectDialog(true)
+                        setProjectOpen(false)
+                      }}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      新增專案...
+                    </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
@@ -2603,14 +2615,7 @@ export default function TasksPage() {
                 </DropdownMenuContent>
               </DropdownMenu>
               {/* 專案 */}
-              <DropdownMenu open={projectOpen} onOpenChange={(open) => {
-                setProjectOpen(open)
-                if (!open) {
-                  setShowInlineProjectManager(false)
-                  setNewInlineProjectName('')
-                  setCurrentEditingTaskId(null)
-                }
-              }}>
+              <DropdownMenu open={projectOpen} onOpenChange={setProjectOpen}>
                 <DropdownMenuTrigger asChild>
                   <button className="flex items-center w-full px-2 py-1.5 text-xs hover:bg-gray-100 rounded">
                     <FolderKanban className="h-3.5 w-3.5 mr-2" />
@@ -2618,92 +2623,69 @@ export default function TasksPage() {
                     <ChevronRight className="h-3 w-3 ml-auto" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent side="left" className="w-56">
-                  {showInlineProjectManager && currentEditingTaskId === task.id ? (
-                    <div className="p-3 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-medium text-sm">新增專案</h4>
-                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => {
-                          setShowInlineProjectManager(false)
-                          setNewInlineProjectName('')
-                          setCurrentEditingTaskId(null)
-                        }}>
-                          <X className="h-4 w-4" />
-                        </Button>
+                <DropdownMenuContent side="left" className="w-64">
+                  {projects.filter(p => p.status === 'active').map((project) => (
+                    <div
+                      key={project.id}
+                      className="flex items-center justify-between px-2 py-1.5 text-xs hover:bg-accent rounded-sm group"
+                    >
+                      <div
+                        className="flex items-center flex-1 cursor-pointer"
+                        onClick={() => {
+                          handleUpdateTask(task.id, { projectId: project.id })
+                          setProjectOpen(false)
+                        }}
+                      >
+                        <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />
+                        <span className="flex-1">{project.name}</span>
+                        {task.projectId === project.id && <Check className="h-3 w-3 mr-2" />}
                       </div>
-                      <div className="flex gap-2">
-                        <Input
-                          value={newInlineProjectName}
-                          onChange={(e) => setNewInlineProjectName(e.target.value)}
-                          placeholder="專案名稱..."
-                          className="h-8 text-sm flex-1"
-                          autoFocus
-                          onKeyDown={async (e) => {
-                            if (e.key === 'Enter' && newInlineProjectName.trim()) {
-                              e.preventDefault()
-                              setIsAddingInlineProject(true)
-                              const newProject = await handleAddProject(newInlineProjectName.trim())
-                              if (newProject) {
-                                handleUpdateTask(task.id, { projectId: newProject.id })
-                              }
-                              setNewInlineProjectName('')
-                              setShowInlineProjectManager(false)
-                              setIsAddingInlineProject(false)
-                              setCurrentEditingTaskId(null)
-                              setProjectOpen(false)
-                            }
+                      <div className="flex gap-1">
+                        <button
+                          className="p-1 hover:bg-gray-200 rounded"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setEditingProject(project)
+                            setEditProjectName(project.name)
+                            setShowEditProjectDialog(true)
+                            setProjectOpen(false)
                           }}
-                        />
-                        <Button
-                          size="sm"
-                          className="h-8"
-                          disabled={!newInlineProjectName.trim() || isAddingInlineProject}
-                          onClick={async () => {
-                            if (newInlineProjectName.trim()) {
-                              setIsAddingInlineProject(true)
-                              const newProject = await handleAddProject(newInlineProjectName.trim())
-                              if (newProject) {
-                                handleUpdateTask(task.id, { projectId: newProject.id })
-                              }
-                              setNewInlineProjectName('')
-                              setShowInlineProjectManager(false)
-                              setIsAddingInlineProject(false)
-                              setCurrentEditingTaskId(null)
-                              setProjectOpen(false)
-                            }
-                          }}
+                          title="編輯專案"
                         >
-                          {isAddingInlineProject ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                        </Button>
+                          <Pencil className="h-3 w-3 text-gray-600" />
+                        </button>
+                        <button
+                          className="p-1 hover:bg-red-100 rounded"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDeletingProject(project)
+                            setShowDeleteProjectDialog(true)
+                            setProjectOpen(false)
+                          }}
+                          title="刪除專案"
+                        >
+                          <Trash2 className="h-3 w-3 text-red-600" />
+                        </button>
                       </div>
                     </div>
-                  ) : (
-                    <>
-                      {projects.filter(p => p.status === 'active').map((project) => (
-                        <DropdownMenuItem key={project.id} onClick={() => handleUpdateTask(task.id, { projectId: project.id })} className="text-xs">
-                          <FolderKanban className="h-3 w-3 mr-2 text-violet-500" />{project.name}
-                          {task.projectId === project.id && <Check className="h-3 w-3 ml-auto" />}
-                        </DropdownMenuItem>
-                      ))}
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { projectId: undefined })}>
-                        <X className="h-4 w-4 mr-2" />
-                        清除專案
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onSelect={(e) => {
-                          e.preventDefault()
-                          setShowInlineProjectManager(true)
-                          setCurrentEditingTaskId(task.id)
-                        }}
-                        className="text-xs text-primary"
-                      >
-                        <Plus className="h-4 w-4 mr-2" />
-                        新增專案...
-                      </DropdownMenuItem>
-                    </>
-                  )}
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { projectId: undefined })}>
+                    <X className="h-4 w-4 mr-2" />
+                    清除專案
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-xs text-primary"
+                    onClick={() => {
+                      setAddingProjectForTaskId(task.id)
+                      setShowAddProjectDialog(true)
+                      setProjectOpen(false)
+                    }}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    新增專案...
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
               <DropdownMenuSeparator />
@@ -4119,6 +4101,194 @@ export default function TasksPage() {
           </button>
         </div>
       )}
+
+      {/* 新增專案 Dialog */}
+      <Dialog open={showAddProjectDialog} onOpenChange={setShowAddProjectDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>新增專案</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <Input
+              value={newProjectName}
+              onChange={(e) => setNewProjectName(e.target.value)}
+              placeholder="輸入專案名稱..."
+              autoFocus
+              onKeyDown={async (e) => {
+                if (e.key === 'Enter' && newProjectName.trim() && !isAddingProject) {
+                  e.preventDefault()
+                  setIsAddingProject(true)
+                  const newProject = await handleAddProject(newProjectName.trim())
+                  if (newProject && addingProjectForTaskId) {
+                    handleUpdateTask(addingProjectForTaskId, { projectId: newProject.id })
+                  }
+                  setNewProjectName('')
+                  setShowAddProjectDialog(false)
+                  setAddingProjectForTaskId(null)
+                  setIsAddingProject(false)
+                }
+              }}
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowAddProjectDialog(false)
+                  setNewProjectName('')
+                  setAddingProjectForTaskId(null)
+                }}
+              >
+                取消
+              </Button>
+              <Button
+                disabled={!newProjectName.trim() || isAddingProject}
+                onClick={async () => {
+                  if (newProjectName.trim()) {
+                    setIsAddingProject(true)
+                    const newProject = await handleAddProject(newProjectName.trim())
+                    if (newProject && addingProjectForTaskId) {
+                      handleUpdateTask(addingProjectForTaskId, { projectId: newProject.id })
+                    }
+                    setNewProjectName('')
+                    setShowAddProjectDialog(false)
+                    setAddingProjectForTaskId(null)
+                    setIsAddingProject(false)
+                  }
+                }}
+              >
+                {isAddingProject ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    新增中...
+                  </>
+                ) : (
+                  '新增'
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 編輯專案 Dialog */}
+      <Dialog open={showEditProjectDialog} onOpenChange={setShowEditProjectDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>編輯專案</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <Input
+              value={editProjectName}
+              onChange={(e) => setEditProjectName(e.target.value)}
+              placeholder="輸入專案名稱..."
+              autoFocus
+              onKeyDown={async (e) => {
+                if (e.key === 'Enter' && editProjectName.trim() && !isUpdatingProject && editingProject) {
+                  e.preventDefault()
+                  setIsUpdatingProject(true)
+                  const success = await handleUpdateProject(editingProject.id, editProjectName.trim())
+                  if (success) {
+                    setEditProjectName('')
+                    setShowEditProjectDialog(false)
+                    setEditingProject(null)
+                  }
+                  setIsUpdatingProject(false)
+                }
+              }}
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowEditProjectDialog(false)
+                  setEditProjectName('')
+                  setEditingProject(null)
+                }}
+              >
+                取消
+              </Button>
+              <Button
+                disabled={!editProjectName.trim() || isUpdatingProject || !editingProject}
+                onClick={async () => {
+                  if (editProjectName.trim() && editingProject) {
+                    setIsUpdatingProject(true)
+                    const success = await handleUpdateProject(editingProject.id, editProjectName.trim())
+                    if (success) {
+                      setEditProjectName('')
+                      setShowEditProjectDialog(false)
+                      setEditingProject(null)
+                    }
+                    setIsUpdatingProject(false)
+                  }
+                }}
+              >
+                {isUpdatingProject ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    更新中...
+                  </>
+                ) : (
+                  '更新'
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 刪除專案確認 Dialog */}
+      <Dialog open={showDeleteProjectDialog} onOpenChange={setShowDeleteProjectDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>刪除專案</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-gray-600">
+              確定要刪除專案「{deletingProject?.name}」嗎？
+            </p>
+            <p className="text-xs text-gray-500">
+              {tasks.filter(t => t.projectId === deletingProject?.id).length > 0
+                ? `此專案目前有 ${tasks.filter(t => t.projectId === deletingProject?.id).length} 個任務在使用，刪除後這些任務的專案關聯將被清除。`
+                : '此專案目前沒有任務使用。'}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowDeleteProjectDialog(false)
+                  setDeletingProject(null)
+                }}
+              >
+                取消
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={isDeletingProject || !deletingProject}
+                onClick={async () => {
+                  if (deletingProject) {
+                    setIsDeletingProject(true)
+                    const success = await handleDeleteProject(deletingProject.id)
+                    if (success) {
+                      setShowDeleteProjectDialog(false)
+                      setDeletingProject(null)
+                    }
+                    setIsDeletingProject(false)
+                  }
+                }}
+              >
+                {isDeletingProject ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    刪除中...
+                  </>
+                ) : (
+                  '確認刪除'
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
