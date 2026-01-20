@@ -338,8 +338,8 @@ export default function CalendarPage() {
     }
   }
 
-  // 時間列（6:00 - 23:00）
-  const hours = Array.from({ length: 18 }, (_, i) => i + 6)
+  // 時間列（0:00 - 23:00，完整 24 小時）
+  const hours = Array.from({ length: 24 }, (_, i) => i)
 
   // 週視圖的天數
   const weekDays = useMemo(() => {
@@ -418,12 +418,12 @@ export default function CalendarPage() {
     }
   }
 
-  // 將 Y 座標轉換為時間（每小時 56px，從 6:00 開始）
+  // 將 Y 座標轉換為時間（每小時 56px，從 0:00 開始）
   const yToTime = useCallback((y: number, baseDate: Date): Date => {
-    const totalMinutes = Math.round((y / 56) * 60) + 6 * 60 // 從 6:00 開始
+    const totalMinutes = Math.round((y / 56) * 60) // 從 0:00 開始
     const hours = Math.floor(totalMinutes / 60)
     const minutes = Math.round((totalMinutes % 60) / 15) * 15 // 15 分鐘為單位
-    return setMinutes(setHours(baseDate, Math.min(23, Math.max(6, hours))), minutes)
+    return setMinutes(setHours(baseDate, Math.min(23, Math.max(0, hours))), minutes)
   }, [])
 
   // 長按開始（觸控裝置）
@@ -528,8 +528,8 @@ export default function CalendarPage() {
         newEnd = addDays(newEnd, deltaDays)
       }
 
-      // 限制在 6:00 - 23:00 之間
-      if (newStart.getHours() >= 6 && newStart.getHours() <= 23) {
+      // 限制在 0:00 - 23:00 之間
+      if (newStart.getHours() >= 0 && newStart.getHours() <= 23) {
         setDraggingTask({
           ...draggingTask,
           startDate: newStart,
@@ -542,9 +542,9 @@ export default function CalendarPage() {
       const baseEndTime = dragEndTime || addMinutes(dragStartTime, 60)
       const newEnd = addMinutes(baseEndTime, deltaMinutes)
 
-      // 確保結束時間在開始時間之後（至少 15 分鐘），且在 6:00 - 23:59 之間
+      // 確保結束時間在開始時間之後（至少 15 分鐘），且在 0:00 - 23:59 之間
       const minEnd = addMinutes(dragStartTime, 15)
-      if (newEnd >= minEnd && newEnd.getHours() >= 6 && (newEnd.getHours() < 24)) {
+      if (newEnd >= minEnd && newEnd.getHours() >= 0 && (newEnd.getHours() < 24)) {
         setDraggingTask({
           ...draggingTask,
           dueDate: newEnd,
@@ -714,7 +714,7 @@ export default function CalendarPage() {
             <div
               className="absolute left-0 right-0 border-t-2 border-red-500 z-10"
               style={{
-                top: `${((new Date().getHours() - 6) * 64 + (new Date().getMinutes() / 60) * 64)}px`,
+                top: `${(new Date().getHours() * 64 + (new Date().getMinutes() / 60) * 64)}px`,
               }}
             >
               <div className="w-3 h-3 bg-red-500 rounded-full -mt-1.5 -ml-1.5" />
@@ -882,14 +882,14 @@ export default function CalendarPage() {
     return (
       <div
         {...swipeHandlers}
-        className="flex flex-col flex-1 overflow-hidden relative"
+        className="flex flex-col flex-1 overflow-y-auto relative"
         style={{
           transform: `translateX(${swipeOffset}px)`,
           transition: isAnimating ? 'transform 150ms ease-out' : 'none',
         }}
       >
-        {/* 頂部：日期標題 + 跨日任務橫條區 */}
-        <div className="shrink-0 border-b">
+        {/* 頂部：日期標題 + 跨日任務橫條區（sticky 凍結） */}
+        <div className="shrink-0 border-b bg-background sticky top-0 z-20">
           {/* 日期標題 */}
           <div className="flex">
             <div className="w-14 shrink-0" />
@@ -978,7 +978,7 @@ export default function CalendarPage() {
 
         {/* 下方：時間軸 + 有時間的任務 */}
         <div
-          className="flex-1 overflow-y-auto"
+          className="flex-1"
           ref={timeGridRef}
           onMouseMove={handleDragMove}
           onMouseUp={handleDragEnd}
@@ -1141,12 +1141,8 @@ export default function CalendarPage() {
                       const startHour = displayTime.getHours()
                       const startMinute = displayTime.getMinutes()
 
-                      // 計算位置：如果是 00:00 的時間點任務，顯示在 6:00 位置
-                      let effectiveHour = startHour
-                      if (startHour < 6) {
-                        effectiveHour = 6 // 早於 6:00 的任務顯示在 6:00 位置
-                      }
-                      const topOffset = (effectiveHour - 6) * 56 + (startHour >= 6 ? (startMinute / 60) * 56 : 0)
+                      // 計算位置：從 0:00 開始
+                      const topOffset = startHour * 56 + (startMinute / 60) * 56
 
                       let height = 50
                       if (endTime && !isPointTask) {
@@ -1227,14 +1223,13 @@ export default function CalendarPage() {
                             </div>
                           </div>
 
-                          {/* 底部 resize handle - 有開始時間或截止時間就可以調整 */}
+                          {/* 底部 resize handle - 只在最底部 6px 觸發 */}
                           {(taskStart || taskEnd) && !isDragging && (
                             <div
                               className={`absolute bottom-0 left-0 right-0 cursor-ns-resize group z-20
-                                         hover:bg-gradient-to-t hover:from-black/15 hover:to-transparent
                                          transition-all duration-150 rounded-b-md
-                                         ${isTouchDevice ? 'h-14' : 'h-10'}
-                                         ${showResizeMode && longPressTask?.id === task.id ? 'bg-primary/20' : ''}`}
+                                         ${isTouchDevice ? 'h-4' : 'h-[6px]'}
+                                         ${showResizeMode && longPressTask?.id === task.id ? 'bg-primary/30' : ''}`}
                               onMouseDown={(e) => {
                                 e.stopPropagation()
                                 e.preventDefault()
@@ -1243,23 +1238,14 @@ export default function CalendarPage() {
                               onTouchStart={(e) => {
                                 if (showResizeMode && longPressTask?.id === task.id) {
                                   e.stopPropagation()
-                                  // 觸控裝置在長按模式下可以直接調整
                                 }
                               }}
                             >
-                              {/* 拖曳指示條 */}
-                              <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2
-                                              w-10 h-1 rounded-full bg-current opacity-30
-                                              group-hover:w-14 group-hover:h-1.5 group-hover:opacity-70
+                              {/* 底部拖曳指示條 - hover 時顯示 */}
+                              <div className="absolute bottom-0.5 left-1/2 -translate-x-1/2
+                                              w-8 h-1 rounded-full bg-current opacity-0
+                                              group-hover:opacity-50
                                               transition-all duration-150" />
-                              {/* Hover 時顯示上下箭頭圖示 */}
-                              <div className="absolute bottom-3 left-1/2 -translate-x-1/2
-                                              opacity-0 group-hover:opacity-60
-                                              transition-opacity duration-150 text-current">
-                                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
-                                  <path d="M12 3l-6 6h12l-6-6zm0 18l6-6H6l6 6z"/>
-                                </svg>
-                              </div>
                             </div>
                           )}
                         </div>
@@ -1272,7 +1258,7 @@ export default function CalendarPage() {
                       <div
                         className="absolute left-0 right-0 border-t-2 border-red-500 z-10"
                         style={{
-                          top: `${((new Date().getHours() - 6) * 56 + (new Date().getMinutes() / 60) * 56)}px`,
+                          top: `${(new Date().getHours() * 56 + (new Date().getMinutes() / 60) * 56)}px`,
                         }}
                       >
                         <div className="w-2 h-2 bg-red-500 rounded-full -mt-1 -ml-1" />
@@ -1521,13 +1507,11 @@ export default function CalendarPage() {
             </div>
           </div>
         ) : (
-          <ScrollArea className="flex-1">
-            <div className="h-full">
-              {viewMode === 'day' && <DayView />}
-              {viewMode === 'week' && <WeekView />}
-              {viewMode === 'month' && <MonthView />}
-            </div>
-          </ScrollArea>
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {viewMode === 'day' && <DayView />}
+            {viewMode === 'week' && <WeekView />}
+            {viewMode === 'month' && <MonthView />}
+          </div>
         )}
       </div>
 
