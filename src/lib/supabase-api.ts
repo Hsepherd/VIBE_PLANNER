@@ -34,6 +34,9 @@ export interface RecurrenceConfig {
   maxOccurrences?: number   // 最大次數（可選）
 }
 
+// 任務類型（用於排程）
+export type TaskType = 'focus' | 'background'
+
 export interface DbTask {
   id: string
   title: string
@@ -56,6 +59,9 @@ export interface DbTask {
   recurrence_config: RecurrenceConfig | null
   parent_task_id: string | null
   is_recurring_instance: boolean
+  // AI 排程欄位
+  estimated_minutes: number | null  // 預估時間（分鐘）
+  task_type: TaskType | null        // 任務類型：focus（專注）或 background（背景）
 }
 
 export interface DbConversation {

@@ -1,10 +1,13 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { tasksApi, type DbTask, type RecurrenceConfig } from './supabase-api'
+import { tasksApi, type DbTask, type RecurrenceConfig, type TaskType } from './supabase-api'
 
 // 例行性任務類型
 export type RecurrenceType = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly'
+
+// 重新導出 TaskType 供其他地方使用
+export type { TaskType } from './supabase-api'
 
 // 前端使用的 Task 類型
 export interface Task {
@@ -29,6 +32,9 @@ export interface Task {
   recurrenceConfig?: RecurrenceConfig
   parentTaskId?: string
   isRecurringInstance?: boolean
+  // AI 排程欄位
+  estimatedMinutes?: number   // 預估時間（分鐘）
+  taskType?: TaskType         // 任務類型：focus（專注）或 background（背景）
 }
 
 // 將 Supabase 資料轉換為前端格式
@@ -54,6 +60,9 @@ function dbTaskToTask(dbTask: DbTask): Task {
     recurrenceConfig: dbTask.recurrence_config || undefined,
     parentTaskId: dbTask.parent_task_id || undefined,
     isRecurringInstance: dbTask.is_recurring_instance || false,
+    // AI 排程欄位
+    estimatedMinutes: dbTask.estimated_minutes || undefined,
+    taskType: dbTask.task_type || undefined,
   }
 }
 
@@ -105,6 +114,9 @@ export function useSupabaseTasks() {
         recurrence_config: task.recurrenceConfig || null,
         parent_task_id: task.parentTaskId || null,
         is_recurring_instance: task.isRecurringInstance || false,
+        // AI 排程欄位
+        estimated_minutes: task.estimatedMinutes || null,
+        task_type: task.taskType || null,
       })
       setTasks(prev => [dbTaskToTask(dbTask), ...prev])
       return dbTask
@@ -157,6 +169,9 @@ export function useSupabaseTasks() {
       if ('recurrenceConfig' in updates) dbUpdates.recurrence_config = updates.recurrenceConfig || null
       if ('parentTaskId' in updates) dbUpdates.parent_task_id = updates.parentTaskId || null
       if ('isRecurringInstance' in updates) dbUpdates.is_recurring_instance = updates.isRecurringInstance || false
+      // AI 排程欄位
+      if ('estimatedMinutes' in updates) dbUpdates.estimated_minutes = updates.estimatedMinutes || null
+      if ('taskType' in updates) dbUpdates.task_type = updates.taskType || null
 
       const dbTask = await tasksApi.update(id, dbUpdates)
       setTasks(prev => prev.map(t => t.id === id ? dbTaskToTask(dbTask) : t))

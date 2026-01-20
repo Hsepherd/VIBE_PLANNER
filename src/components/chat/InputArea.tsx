@@ -202,6 +202,7 @@ export default function InputArea() {
           image: currentImage,
           calendarTasks, // 傳送任務資料給 AI
           userInfo, // 傳送使用者資料給 AI
+          userId: user?.id, // 傳送使用者 ID（用於 AI Function Calling）
           projects: projects.filter(p => p.status === 'active').map(p => ({
             id: p.id,
             name: p.name,
@@ -246,6 +247,30 @@ export default function InputArea() {
               if (data.type === 'content') {
                 fullContent += data.content
                 appendStreamingContent(data.content)
+              } else if (data.type === 'schedule_preview') {
+                // 收到排程預覽，設定到 store
+                console.log('[InputArea] 收到排程預覽:', data.data)
+                const setPendingSchedulePreview = useAppStore.getState().setPendingSchedulePreview
+                setPendingSchedulePreview({
+                  id: crypto.randomUUID(),
+                  timestamp: new Date(),
+                  scheduledTasks: data.data.scheduledTasks || [],
+                  unscheduledTasks: data.data.unscheduledTasks || [],
+                  summary: data.data.summary || {
+                    totalTasksProcessed: 0,
+                    successfullyScheduled: 0,
+                    failedToSchedule: 0,
+                    totalMinutesScheduled: 0,
+                    daysSpanned: 0,
+                  },
+                  // S-010: 衝突資訊
+                  conflictCheck: data.data.conflictCheck,
+                  conflictSummary: data.data.conflictSummary,
+                })
+              } else if (data.type === 'preference_learned') {
+                // AI 學習到了用戶的排程偏好
+                console.log('[InputArea] AI 學習到偏好:', data.preference)
+                // 可選：未來可加入 toast 通知元件
               } else if (data.type === 'done') {
                 // 解析完整內容
                 const parsed = parseAIResponse(fullContent)
@@ -264,7 +289,10 @@ export default function InputArea() {
                 let messageContent = fullContent
 
                 // 處理 JSON 回應：可能是 ```json...``` 格式，也可能是純 JSON
-                if (parsed.type === 'tasks_extracted' || parsed.type === 'task_search' || parsed.type === 'task_categorization' || parsed.type === 'task_update') {
+                // 優先處理 chat 類型（偏好學習等場景會返回這種格式）
+                if (parsed.type === 'chat' && parsed.message) {
+                  messageContent = parsed.message
+                } else if (parsed.type === 'tasks_extracted' || parsed.type === 'task_search' || parsed.type === 'task_categorization' || parsed.type === 'task_update') {
                   if (fullContent.includes('```json')) {
                     // 有 code block 的情況：保留 JSON 區塊前的 Markdown 內容
                     const jsonStart = fullContent.indexOf('```json')
@@ -290,6 +318,9 @@ export default function InputArea() {
                       messageContent = parsed.message || '處理完成'
                     }
                   }
+                } else if (fullContent.trim().startsWith('{') && parsed.message) {
+                  // 處理其他類型的純 JSON 回應（有 message 欄位的情況）
+                  messageContent = parsed.message
                 }
 
                 console.log('[InputArea] 最終訊息長度:', messageContent.length)
@@ -506,7 +537,10 @@ export default function InputArea() {
 
           // 決定訊息內容（與主邏輯相同）
           let messageContent = fullContent
-          if (parsed.type === 'tasks_extracted' || parsed.type === 'task_search' || parsed.type === 'task_categorization' || parsed.type === 'task_update') {
+          // 優先處理 chat 類型
+          if (parsed.type === 'chat' && parsed.message) {
+            messageContent = parsed.message
+          } else if (parsed.type === 'tasks_extracted' || parsed.type === 'task_search' || parsed.type === 'task_categorization' || parsed.type === 'task_update') {
             if (fullContent.includes('```json')) {
               const jsonStart = fullContent.indexOf('```json')
               if (jsonStart > 50) {
@@ -524,6 +558,9 @@ export default function InputArea() {
                 messageContent = parsed.message || '處理完成'
               }
             }
+          } else if (fullContent.trim().startsWith('{') && parsed.message) {
+            // 處理其他類型的純 JSON 回應
+            messageContent = parsed.message
           }
 
           // 建立 AI 回覆訊息物件

@@ -1,11 +1,14 @@
 'use client'
 
-import { useState, useMemo, ReactNode } from 'react'
+import { useState, useMemo, ReactNode, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { useSupabaseTasks, type Task } from '@/lib/useSupabaseTasks'
-import { useAppStore, type AppState, type Project } from '@/lib/store'
+import { useSupabaseProjects } from '@/lib/useSupabaseProjects'
+import type { Project } from '@/lib/useSupabaseProjects'
+import { TaskDetailDialog } from '@/components/task/TaskDetailDialog'
 import {
   format,
   isToday,
@@ -35,6 +38,9 @@ import {
   GripVertical,
   Edit3,
   X,
+  ChevronDown,
+  Circle,
+  Flag,
 } from 'lucide-react'
 import Link from 'next/link'
 import {
@@ -54,6 +60,23 @@ import {
   rectSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+
+// 優先級配置
+const priorityConfig = {
+  low: { label: '低', color: 'bg-gray-100 text-gray-600' },
+  medium: { label: '中', color: 'bg-blue-100 text-blue-600' },
+  high: { label: '高', color: 'bg-orange-100 text-orange-600' },
+  urgent: { label: '緊急', color: 'bg-red-100 text-red-600' },
+}
+
+// 狀態配置
+const statusConfig: Record<string, { label: string; color: string; icon: typeof Circle }> = {
+  pending: { label: '待處理', color: 'text-gray-500', icon: Circle },
+  in_progress: { label: '進行中', color: 'text-blue-500', icon: Clock },
+  completed: { label: '已完成', color: 'text-green-500', icon: CheckCircle2 },
+  cancelled: { label: '已取消', color: 'text-gray-400', icon: Circle },
+  on_hold: { label: '暫停', color: 'text-yellow-500', icon: Clock },
+}
 
 // 區塊類型定義
 type WidgetId = 'overdue' | 'today' | 'upcoming' | 'projects' | 'calendar' | 'calendarTasks'
@@ -122,10 +145,65 @@ function SortableWidget({
 }
 
 export default function DashboardPage() {
-  // 使用 Supabase 同步的任務資料（修復 BUG #1 & #2）
-  const { tasks, completeTask, updateTask, isLoading } = useSupabaseTasks()
-  // Projects 仍使用本地 store（暫時保持）
-  const projects = useAppStore((state: AppState) => state.projects)
+  // 使用 Supabase 同步的任務資料
+  const { tasks, completeTask, updateTask, isLoading, refresh: refreshTasks } = useSupabaseTasks()
+  // 使用 Supabase 同步的專案資料
+  const { projects: rawProjects, loading: projectsLoading } = useSupabaseProjects()
+
+  // 專案排序（從 localStorage 載入）
+  const [projectOrder, setProjectOrder] = useState<string[]>([])
+  // 展開的專案
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
+  // 選中的任務（用於 TaskDetailDialog）
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+
+  // 初始化專案順序
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('project-order')
+      if (saved) {
+        try {
+          setProjectOrder(JSON.parse(saved))
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }, [])
+
+  // 當專案列表變化時，更新排序
+  useEffect(() => {
+    if (rawProjects.length > 0) {
+      setProjectOrder(prev => {
+        const existingIds = new Set(prev)
+        const newIds = rawProjects
+          .filter(p => !existingIds.has(p.id))
+          .map(p => p.id)
+        if (newIds.length > 0) {
+          const updated = [...newIds, ...prev]
+          localStorage.setItem('project-order', JSON.stringify(updated))
+          return updated
+        }
+        const validIds = new Set(rawProjects.map(p => p.id))
+        const cleaned = prev.filter(id => validIds.has(id))
+        if (cleaned.length !== prev.length) {
+          localStorage.setItem('project-order', JSON.stringify(cleaned))
+          return cleaned
+        }
+        return prev
+      })
+    }
+  }, [rawProjects])
+
+  // 根據排序順序排列專案
+  const projects = [...rawProjects].sort((a, b) => {
+    const aIndex = projectOrder.indexOf(a.id)
+    const bIndex = projectOrder.indexOf(b.id)
+    if (aIndex === -1 && bIndex === -1) return 0
+    if (aIndex === -1) return 1
+    if (bIndex === -1) return -1
+    return aIndex - bIndex
+  })
 
   // 編輯模式
   const [isEditMode, setIsEditMode] = useState(false)
@@ -244,12 +322,70 @@ export default function DashboardPage() {
 
   const selectedDateTasks = selectedDate ? getTasksForDate(selectedDate) : []
 
-  // 計算專案進度（動態計算，確保與 Projects 頁面一致）
-  const getProjectProgress = (projectId: string) => {
+  // 計算專案統計
+  const getProjectStats = (projectId: string) => {
     const projectTasks = tasks.filter((t: Task) => t.projectId === projectId)
-    if (projectTasks.length === 0) return 0
     const completed = projectTasks.filter((t: Task) => t.status === 'completed').length
-    return Math.round((completed / projectTasks.length) * 100)
+    const inProgress = projectTasks.filter((t: Task) => t.status === 'in_progress').length
+    const pending = projectTasks.filter((t: Task) => t.status === 'pending').length
+    const total = projectTasks.length
+    return {
+      completed,
+      inProgress,
+      pending,
+      total,
+      progress: total > 0 ? Math.round((completed / total) * 100) : 0,
+    }
+  }
+
+  // 取得專案的任務列表
+  const getProjectTasks = (projectId: string) => {
+    return tasks
+      .filter((t: Task) => t.projectId === projectId)
+      .sort((a, b) => {
+        const statusOrder: Record<string, number> = { pending: 0, in_progress: 1, on_hold: 2, completed: 3, cancelled: 4 }
+        const priorityOrder: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 }
+        const statusDiff = (statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99)
+        if (statusDiff !== 0) return statusDiff
+        return (priorityOrder[a.priority] ?? 99) - (priorityOrder[b.priority] ?? 99)
+      })
+  }
+
+  // 切換專案展開/收合
+  const toggleProjectExpand = (projectId: string) => {
+    setExpandedProjects(prev => {
+      const next = new Set(prev)
+      if (next.has(projectId)) {
+        next.delete(projectId)
+      } else {
+        next.add(projectId)
+      }
+      return next
+    })
+  }
+
+  // 快速完成/取消完成任務
+  const handleToggleComplete = async (task: Task) => {
+    const newStatus = task.status === 'completed' ? 'pending' : 'completed'
+    try {
+      await updateTask(task.id, {
+        status: newStatus,
+        completedAt: newStatus === 'completed' ? new Date() : undefined,
+      })
+      refreshTasks()
+    } catch (err) {
+      console.error('更新任務狀態失敗:', err)
+    }
+  }
+
+  // 處理任務更新
+  const handleTaskUpdate = async (taskId: string, updates: Partial<Task>) => {
+    try {
+      await updateTask(taskId, updates)
+      refreshTasks()
+    } catch (err) {
+      console.error('更新任務失敗:', err)
+    }
   }
 
   // DnD sensors
@@ -370,35 +506,132 @@ export default function DashboardPage() {
       case 'projects':
         return (
           <Card>
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2">
                 <TrendingUp className="h-5 w-5" />
                 專案進度
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-2">
               {projects.length === 0 ? (
                 <p className="text-muted-foreground text-center py-4">尚未建立任何專案</p>
               ) : (
-                <div className="space-y-4">
-                  {projects.map((project: Project) => {
-                    const progress = getProjectProgress(project.id)
+                <div className="space-y-2">
+                  {projects.slice(0, 5).map((project: Project) => {
+                    const stats = getProjectStats(project.id)
+                    const projectTasks = getProjectTasks(project.id)
+                    const isExpanded = expandedProjects.has(project.id)
+
                     return (
-                      <div key={project.id} className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium">{project.name}</span>
-                          <span className="text-sm text-muted-foreground">{progress}%</span>
-                        </div>
-                        <div className="h-2 rounded-full bg-muted overflow-hidden">
-                          <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
-                        </div>
+                      <div key={project.id} className="border rounded-lg overflow-hidden">
+                        {/* 專案標題 - 可點擊展開 */}
+                        <button
+                          className="w-full p-3 flex items-center gap-3 hover:bg-muted/50 transition-colors text-left"
+                          onClick={() => toggleProjectExpand(project.id)}
+                        >
+                          <ChevronDown
+                            className={`h-4 w-4 text-muted-foreground transition-transform ${
+                              isExpanded ? '' : '-rotate-90'
+                            }`}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium truncate">{project.name}</span>
+                              <span className="text-xs text-muted-foreground shrink-0">{stats.progress}%</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-1">
+                              <div
+                                className="h-full bg-primary transition-all"
+                                style={{ width: `${stats.progress}%` }}
+                              />
+                            </div>
+                            <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                              <span className="flex items-center gap-1">
+                                <CheckCircle2 className="h-3 w-3 text-green-500" />
+                                {stats.completed}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3 w-3 text-blue-500" />
+                                {stats.inProgress}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Circle className="h-3 w-3 text-gray-400" />
+                                {stats.pending}
+                              </span>
+                            </div>
+                          </div>
+                        </button>
+
+                        {/* 展開的任務列表 */}
+                        {isExpanded && (
+                          <div className="border-t bg-muted/30">
+                            {projectTasks.length === 0 ? (
+                              <div className="p-3 text-center text-sm text-muted-foreground">
+                                此專案尚無任務
+                              </div>
+                            ) : (
+                              <div className="divide-y divide-border/50">
+                                {projectTasks.slice(0, 5).map((task) => {
+                                  const StatusIcon = statusConfig[task.status].icon
+
+                                  return (
+                                    <div
+                                      key={task.id}
+                                      className={`p-2.5 hover:bg-muted/50 transition-colors cursor-pointer flex items-start gap-2 ${
+                                        task.status === 'completed' ? 'opacity-60' : ''
+                                      }`}
+                                      onClick={() => setSelectedTask(task)}
+                                    >
+                                      <Checkbox
+                                        checked={task.status === 'completed'}
+                                        onCheckedChange={() => handleToggleComplete(task)}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="mt-0.5"
+                                      />
+                                      <div className="flex-1 min-w-0">
+                                        <span className={`text-sm ${
+                                          task.status === 'completed' ? 'line-through text-muted-foreground' : ''
+                                        }`}>
+                                          {task.title}
+                                        </span>
+                                        <div className="flex items-center gap-2 mt-0.5 text-xs">
+                                          <span className={statusConfig[task.status].color}>
+                                            {statusConfig[task.status].label}
+                                          </span>
+                                          <span className={`px-1.5 py-0.5 rounded ${priorityConfig[task.priority].color}`}>
+                                            {priorityConfig[task.priority].label}
+                                          </span>
+                                          {task.dueDate && (
+                                            <span className="text-muted-foreground">
+                                              {format(new Date(task.dueDate), 'M/d')}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                                {projectTasks.length > 5 && (
+                                  <Link href="/projects" className="block p-2 text-center text-xs text-muted-foreground hover:text-foreground">
+                                    還有 {projectTasks.length - 5} 個任務...
+                                  </Link>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )
                   })}
+                  {projects.length > 5 && (
+                    <p className="text-xs text-muted-foreground text-center">
+                      還有 {projects.length - 5} 個專案
+                    </p>
+                  )}
                 </div>
               )}
               <Link href="/projects">
-                <Button variant="ghost" className="w-full mt-4">管理專案</Button>
+                <Button variant="ghost" className="w-full mt-3" size="sm">完整專案管理</Button>
               </Link>
             </CardContent>
           </Card>
@@ -654,6 +887,14 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {/* 任務詳細編輯對話框 */}
+      <TaskDetailDialog
+        task={selectedTask}
+        projects={projects}
+        onClose={() => setSelectedTask(null)}
+        onUpdate={handleTaskUpdate}
+      />
     </div>
   )
 }

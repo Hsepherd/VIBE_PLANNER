@@ -36,7 +36,7 @@ const navItems = [
   { href: '/tasks', label: '任務', icon: CheckSquare },
   { href: '/calendar', label: '行事曆', icon: Calendar },
   { href: '/projects', label: '專案', icon: FolderKanban },
-  { href: '/analytics', label: '分析', icon: BarChart3 },
+  { href: '/reports', label: '報表', icon: BarChart3 },
 ]
 
 // 側邊欄內容元件

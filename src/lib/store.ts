@@ -13,6 +13,9 @@ export interface Message {
   }
 }
 
+// 任務類型（用於排程）
+export type TaskType = 'focus' | 'background'
+
 // 任務類型
 export interface Task {
   id: string
@@ -28,6 +31,9 @@ export interface Task {
   createdAt: Date
   updatedAt: Date
   completedAt?: Date
+  // AI 排程欄位
+  estimatedMinutes?: number   // 預估時間（分鐘）
+  taskType?: TaskType         // 任務類型：focus（專注）或 background（背景）
 }
 
 // 專案類型
@@ -141,6 +147,11 @@ export interface AppState {
   setPendingTaskSearch: (search: PendingTaskSearch | null) => void
   selectTaskForUpdate: (taskId: string, taskTitle: string) => void  // 選擇要更新的任務
   clearPendingTaskSearch: () => void
+
+  // 待確認排程預覽
+  pendingSchedulePreview: PendingSchedulePreview | null
+  setPendingSchedulePreview: (preview: PendingSchedulePreview | null) => void
+  clearPendingSchedulePreview: () => void
 }
 
 // AI 萃取任務的類型
@@ -154,6 +165,8 @@ export interface ExtractedTask {
   project?: string
   group?: string  // 任務組別：電訪組、業務組、行政組、客服組、行銷組、財務組
   recurrence_type?: 'none' | 'daily' | 'weekly' | 'monthly'  // 例行性任務類型
+  // 注意：task_type 在 AI 萃取中用於 action/follow-up/decision 分類
+  // 排程用的 estimated_minutes 和 task_type (focus/background) 在 S-005 中由另一個 AI 流程設定
 }
 
 // 待確認任務群組（每次萃取是一個群組）
@@ -242,6 +255,68 @@ export interface PendingTaskSearch {
   // 用戶選擇後的狀態
   selectedTaskId?: string  // 用戶選擇的任務 ID
   selectedTaskTitle?: string  // 用戶選擇的任務標題
+}
+
+// 排程預覽中的任務
+export interface ScheduledTaskItem {
+  taskId: string
+  taskTitle: string
+  priority: 'low' | 'medium' | 'high' | 'urgent'
+  dueDate: string | null
+  startTime: string
+  endTime: string
+  estimatedMinutes: number
+  taskType: 'focus' | 'background'
+  confidence: 'high' | 'medium' | 'low'
+  slotDate: string
+  reasoning: string
+}
+
+// 未能排程的任務
+export interface UnscheduledTaskItem {
+  taskId: string
+  taskTitle: string
+  reason: string
+}
+
+// 衝突資訊（S-010）
+export interface ConflictInfo {
+  taskId: string
+  taskTitle: string
+  taskStart: string
+  taskEnd: string
+  conflictingEvent: {
+    title: string
+    start: string
+    end: string
+  }
+  overlapMinutes: number
+  conflictType: 'full_overlap' | 'partial_start' | 'partial_end' | 'task_contains_event' | 'event_contains_task'
+}
+
+export interface ConflictCheckResult {
+  hasConflicts: boolean
+  conflicts: ConflictInfo[]
+  conflictCount: number
+  totalOverlapMinutes: number
+}
+
+// 待確認排程預覽
+export interface PendingSchedulePreview {
+  id: string
+  timestamp: Date
+  scheduledTasks: ScheduledTaskItem[]
+  unscheduledTasks: UnscheduledTaskItem[]
+  summary: {
+    totalTasksProcessed: number
+    successfullyScheduled: number
+    failedToSchedule: number
+    totalMinutesScheduled: number
+    daysSpanned: number
+  }
+  // S-010: 衝突資訊
+  conflictCheck?: ConflictCheckResult
+  conflictSummary?: string
 }
 
 // 生成 UUID
@@ -558,6 +633,11 @@ export const useAppStore = create<AppState>()(
             : null,
         })),
       clearPendingTaskSearch: () => set({ pendingTaskSearch: null }),
+
+      // 待確認排程預覽
+      pendingSchedulePreview: null,
+      setPendingSchedulePreview: (preview) => set({ pendingSchedulePreview: preview }),
+      clearPendingSchedulePreview: () => set({ pendingSchedulePreview: null }),
     }),
     {
       name: 'vibe-planner-storage',

@@ -1,8 +1,10 @@
 'use client'
 
 import { useRef, useEffect, useState, useMemo } from 'react'
-import { useAppStore, type AppState, type Message, type ProcessedTask, type ProcessedTaskGroup, type PendingTaskGroup, type ExtractedTask, type PendingCategorizationGroup, type TaskCategorizationItem } from '@/lib/store'
+import { useAppStore, type AppState, type Message, type ProcessedTask, type ProcessedTaskGroup, type PendingTaskGroup, type ExtractedTask, type PendingCategorizationGroup, type TaskCategorizationItem, type PendingSchedulePreview } from '@/lib/store'
+import { SchedulePreview } from '@/components/SchedulePreview'
 import { useSupabaseTasks } from '@/lib/useSupabaseTasks'
+import { useAuth } from '@/lib/useAuth'
 import { useSupabaseProjects } from '@/lib/useSupabaseProjects'
 import MessageBubble from './MessageBubble'
 import { Card } from '@/components/ui/card'
@@ -27,6 +29,7 @@ import {
 import { recordPositiveExample, recordNegativeExample } from '@/lib/preferences'
 import { learnFromTaskFeedback } from '@/lib/few-shot-learning'
 import { conversationLearningsApi } from '@/lib/supabase-learning'
+import { logScheduleApplied, logScheduleCancelled } from '@/lib/ai-functions/handlers/learnFromScheduleAction'
 
 // 解析 description 內容的函數
 function parseDescription(description: string) {
@@ -103,6 +106,7 @@ function parseDescription(description: string) {
 }
 
 export default function ChatWindow() {
+  const { user } = useAuth()
   const messages = useAppStore((state: AppState) => state.messages)
   const streamingContent = useAppStore((state: AppState) => state.streamingContent)
   const isLoading = useAppStore((state: AppState) => state.isLoading)
@@ -142,6 +146,10 @@ export default function ChatWindow() {
   const pendingTaskSearch = useAppStore((state: AppState) => state.pendingTaskSearch)
   const selectTaskForUpdate = useAppStore((state: AppState) => state.selectTaskForUpdate)
   const clearPendingTaskSearch = useAppStore((state: AppState) => state.clearPendingTaskSearch)
+
+  // 待確認排程預覽
+  const pendingSchedulePreview = useAppStore((state: AppState) => state.pendingSchedulePreview)
+  const clearPendingSchedulePreview = useAppStore((state: AppState) => state.clearPendingSchedulePreview)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -758,6 +766,100 @@ ${group.sourceContext}
     if (!pendingTaskSearch) return
     // 清除選擇狀態，回到任務列表
     selectTaskForUpdate('', '')
+  }
+
+  // 確認套用排程
+  const [isApplyingSchedule, setIsApplyingSchedule] = useState(false)
+
+  const handleApplySchedule = async () => {
+    if (!pendingSchedulePreview || isApplyingSchedule) return
+    setIsApplyingSchedule(true)
+
+    try {
+      // 取得使用者 ID（從 useAuth hook）
+      const userId = user?.id
+
+      if (!userId) {
+        throw new Error('未登入')
+      }
+
+      // 呼叫 API 套用排程
+      const response = await fetch('/api/tasks/apply-schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          scheduledTasks: pendingSchedulePreview.scheduledTasks.map(task => ({
+            taskId: task.taskId,
+            taskTitle: task.taskTitle,
+            startTime: task.startTime,
+            endTime: task.endTime,
+            estimatedMinutes: task.estimatedMinutes,
+            taskType: task.taskType,
+          })),
+        }),
+      })
+
+      const result = await response.json()
+
+      if (result.success) {
+        // 顯示成功訊息
+        addMessage({
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: `✅ ${result.message}`,
+          timestamp: new Date(),
+        })
+
+        // 記錄用戶套用排程的行為（用於學習）
+        logScheduleApplied(userId, pendingSchedulePreview.scheduledTasks.map(task => ({
+          taskId: task.taskId,
+          taskTitle: task.taskTitle,
+          startTime: task.startTime,
+          endTime: task.endTime,
+          estimatedMinutes: task.estimatedMinutes,
+          taskType: task.taskType,
+          priority: task.priority,
+        }))).catch(err => console.error('[ChatWindow] 記錄排程套用失敗:', err))
+      } else {
+        throw new Error(result.error || '套用排程失敗')
+      }
+
+      clearPendingSchedulePreview()
+    } catch (err) {
+      console.error('套用排程失敗:', err)
+      addMessage({
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: `❌ 套用排程時發生錯誤：${err instanceof Error ? err.message : '未知錯誤'}`,
+        timestamp: new Date(),
+      })
+    } finally {
+      setIsApplyingSchedule(false)
+    }
+  }
+
+  const handleCancelSchedule = () => {
+    // 記錄用戶取消排程的行為（用於學習）
+    if (pendingSchedulePreview && user?.id) {
+      logScheduleCancelled(user.id, pendingSchedulePreview.scheduledTasks.map(task => ({
+        taskId: task.taskId,
+        taskTitle: task.taskTitle,
+        startTime: task.startTime,
+        endTime: task.endTime,
+        estimatedMinutes: task.estimatedMinutes,
+        taskType: task.taskType,
+        priority: task.priority,
+      }))).catch(err => console.error('[ChatWindow] 記錄排程取消失敗:', err))
+    }
+
+    clearPendingSchedulePreview()
+    addMessage({
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      content: '已取消排程。如果需要重新排程，請再告訴我！',
+      timestamp: new Date(),
+    })
   }
 
   return (
@@ -1487,6 +1589,24 @@ ${group.sourceContext}
                     </Button>
                   </div>
                 </Card>
+              </div>
+            )}
+
+            {/* 待確認排程預覽 */}
+            {pendingSchedulePreview && pendingSchedulePreview.scheduledTasks.length > 0 && (
+              <div className="py-4 px-4">
+                <div className="max-w-3xl mx-auto">
+                  <SchedulePreview
+                    scheduledTasks={pendingSchedulePreview.scheduledTasks}
+                    unscheduledTasks={pendingSchedulePreview.unscheduledTasks}
+                    summary={pendingSchedulePreview.summary}
+                    onConfirm={handleApplySchedule}
+                    onCancel={handleCancelSchedule}
+                    isConfirming={isApplyingSchedule}
+                    conflictCheck={pendingSchedulePreview.conflictCheck}
+                    conflictSummary={pendingSchedulePreview.conflictSummary}
+                  />
+                </div>
               </div>
             )}
 
