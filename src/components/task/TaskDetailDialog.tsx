@@ -483,6 +483,46 @@ export function TaskDetailDialog({
                 </div>
               </div>
 
+              {/* 開始日期 */}
+              <div className="flex items-center h-9 hover:bg-gray-100 rounded-md px-2 -mx-2">
+                <span className="text-[13px] text-gray-500 w-[72px] shrink-0">開始日期</span>
+                <div className="flex-1">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button className="flex items-center w-full group">
+                        <span className="flex items-center gap-1.5 text-[13px] text-gray-900">
+                          <CalendarDays className="h-4 w-4 text-green-500" />
+                          {displayTask.startDate
+                            ? format(new Date(displayTask.startDate), 'yyyy/M/d', { locale: zhTW })
+                            : '未設定'}
+                        </span>
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <CalendarComponent
+                        mode="single"
+                        selected={displayTask.startDate ? new Date(displayTask.startDate) : undefined}
+                        onSelect={(date) => handleUpdate({ startDate: date })}
+                        locale={zhTW}
+                        defaultMonth={displayTask.startDate ? new Date(displayTask.startDate) : new Date()}
+                      />
+                      {displayTask.startDate && (
+                        <div className="p-2 border-t">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="w-full text-destructive hover:text-destructive"
+                            onClick={() => handleUpdate({ startDate: undefined })}
+                          >
+                            清除日期
+                          </Button>
+                        </div>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
+
               {/* 截止日期 */}
               <div className="flex items-center h-9 hover:bg-gray-100 rounded-md px-2 -mx-2">
                 <span className="text-[13px] text-gray-500 w-[72px] shrink-0">截止日期</span>
@@ -491,7 +531,7 @@ export function TaskDetailDialog({
                     <PopoverTrigger asChild>
                       <button className="flex items-center w-full group">
                         <span className="flex items-center gap-1.5 text-[13px] text-gray-900">
-                          <CalendarDays className="h-4 w-4 text-gray-400" />
+                          <CalendarDays className="h-4 w-4 text-red-400" />
                           {displayTask.dueDate
                             ? format(new Date(displayTask.dueDate), 'yyyy/M/d', { locale: zhTW })
                             : '未設定'}
