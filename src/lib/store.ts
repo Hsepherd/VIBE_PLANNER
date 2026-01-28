@@ -16,6 +16,9 @@ export interface Message {
 // 任務類型（用於排程）
 export type TaskType = 'focus' | 'background'
 
+// 處理模式類型
+export type ProcessingMode = 'extractTasks' | 'organizeMeetingNotes'
+
 // 任務類型
 export interface Task {
   id: string
@@ -157,6 +160,11 @@ export interface AppState {
   pendingMeetingNotes: PendingMeetingNotes | null
   setPendingMeetingNotes: (notes: PendingMeetingNotes | null) => void
   clearPendingMeetingNotes: () => void
+
+  // 處理模式選擇
+  processingModes: ProcessingMode[]
+  setProcessingModes: (modes: ProcessingMode[]) => void
+  toggleProcessingMode: (mode: ProcessingMode) => void
 }
 
 // AI 萃取任務的類型
@@ -667,6 +675,21 @@ export const useAppStore = create<AppState>()(
       pendingMeetingNotes: null,
       setPendingMeetingNotes: (notes) => set({ pendingMeetingNotes: notes }),
       clearPendingMeetingNotes: () => set({ pendingMeetingNotes: null }),
+
+      // 處理模式選擇（預設兩者都啟用）
+      processingModes: ['extractTasks', 'organizeMeetingNotes'],
+      setProcessingModes: (modes) => set({ processingModes: modes }),
+      toggleProcessingMode: (mode) => set((state) => {
+        const current = state.processingModes
+        if (current.includes(mode)) {
+          // 移除模式（但至少保留一個）
+          const newModes = current.filter(m => m !== mode)
+          return { processingModes: newModes.length > 0 ? newModes : current }
+        } else {
+          // 添加模式
+          return { processingModes: [...current, mode] }
+        }
+      }),
     }),
     {
       name: 'vibe-planner-storage',

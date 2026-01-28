@@ -9,7 +9,10 @@ import { useConversationSummary } from '@/lib/useConversationSummary'
 import { useSupabaseTasks } from '@/lib/useSupabaseTasks'
 import { useSupabaseProjects } from '@/lib/useSupabaseProjects'
 import { useAuth } from '@/lib/useAuth'
-import { Send, Paperclip, X, Loader2, Image as ImageIcon, Brain } from 'lucide-react'
+import { Send, Paperclip, X, Loader2, Image as ImageIcon, Brain, Settings2 } from 'lucide-react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Checkbox } from '@/components/ui/checkbox'
+import type { ProcessingMode } from '@/lib/store'
 import { parseAIResponse, findDuplicateTask, type TaskSearchResult } from '@/lib/utils-client'
 import { learnFromUserReply } from '@/lib/few-shot-learning'
 import { estimateTokens, estimateMessageTokens } from '@/lib/token-utils'
@@ -34,6 +37,8 @@ export default function InputArea() {
     setPendingCategorizations,
     setPendingTaskUpdate,
     setPendingTaskSearch,
+    processingModes,
+    toggleProcessingMode,
   } = useAppStore()
 
   const {
@@ -209,6 +214,7 @@ export default function InputArea() {
             description: p.description,
             status: p.status,
           })), // 傳送專案資料給 AI
+          processingModes, // 傳送處理模式設定
         }),
       })
 
@@ -672,6 +678,45 @@ export default function InputArea() {
               <Paperclip className="h-5 w-5 md:h-4 md:w-4" />
             )}
           </Button>
+
+          {/* 處理模式選擇器 */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="shrink-0 h-10 w-10 md:h-9 md:w-9"
+                disabled={isLoading || isSummarizing}
+                title="處理模式設定"
+              >
+                <Settings2 className={`h-5 w-5 md:h-4 md:w-4 ${
+                  processingModes.length < 2 ? 'text-primary' : ''
+                }`} />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-52 p-3" align="start">
+              <div className="text-xs text-muted-foreground mb-3">會議記錄處理模式</div>
+              <div className="space-y-3">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <Checkbox
+                    checked={processingModes.includes('extractTasks')}
+                    onCheckedChange={() => toggleProcessingMode('extractTasks')}
+                  />
+                  <span>📋 萃取任務</span>
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <Checkbox
+                    checked={processingModes.includes('organizeMeetingNotes')}
+                    onCheckedChange={() => toggleProcessingMode('organizeMeetingNotes')}
+                  />
+                  <span>📝 整理會議記錄</span>
+                </label>
+              </div>
+              <div className="text-xs text-muted-foreground mt-3 pt-2 border-t">
+                預設兩者皆啟用
+              </div>
+            </PopoverContent>
+          </Popover>
 
           {/* 輸入框 */}
           <Textarea

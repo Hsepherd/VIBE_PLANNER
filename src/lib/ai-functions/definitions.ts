@@ -280,6 +280,30 @@ export type AIFunctionName =
   | 'generateSmartSchedule'
   | 'organizeMeetingNotes'
 
+// 檢查是否為會議記錄相關對話
+export function isMeetingNotesRelated(message: string): boolean {
+  const meetingKeywords = [
+    // 直接請求
+    '整理會議', '會議記錄', '會議紀錄', '會議整理',
+    '整理這段', '整理筆記', '整理逐字稿',
+    '逐字稿', '開會紀錄', '開會內容',
+    'meeting notes', 'meeting transcript',
+    // 會議內容特徵（長文本常見詞）
+    '討論', '決議', '待辦', '行動項目',
+    '與會', '出席', '會議時間', '會議地點',
+  ]
+
+  const lowerMessage = message.toLowerCase()
+
+  // 檢查關鍵詞
+  const hasKeyword = meetingKeywords.some(keyword => lowerMessage.includes(keyword))
+
+  // 檢查是否為長文本（可能是會議逐字稿）
+  const isLongText = message.length > 500
+
+  return hasKeyword || isLongText
+}
+
 // 檢查是否為排程相關對話
 export function isSchedulingRelated(message: string): boolean {
   const schedulingKeywords = [

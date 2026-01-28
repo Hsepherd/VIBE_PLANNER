@@ -3,7 +3,7 @@
  * 讓 AI 能夠執行實際動作（查詢任務、排程等）
  */
 
-export { AI_FUNCTIONS, isSchedulingRelated } from './definitions'
+export { AI_FUNCTIONS, isSchedulingRelated, isMeetingNotesRelated } from './definitions'
 export type { AIFunctionName } from './definitions'
 
 export { executeFunctionCall, executeFunctionCalls } from './executor'

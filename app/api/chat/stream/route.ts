@@ -2,14 +2,25 @@ import { NextRequest } from 'next/server'
 import openai, { getFullSystemPrompt, getMeetingTranscriptPrompt, isLongMeetingTranscript, generateCalendarContext, generateProjectsContext } from '@/lib/openai'
 import { generatePreferencePrompt, shouldInjectPreferences } from '@/lib/preferences'
 import { generateFewShotPrompt } from '@/lib/few-shot-learning'
-import { AI_FUNCTIONS, isSchedulingRelated, executeFunctionCall } from '@/lib/ai-functions'
+import { AI_FUNCTIONS, isSchedulingRelated, isMeetingNotesRelated, executeFunctionCall } from '@/lib/ai-functions'
 import { learnPreferenceFromMessage, containsPreferenceIntent } from '@/lib/ai-functions/handlers/learnPreference'
 import type { ChatCompletionMessageParam, ChatCompletionToolMessageParam } from 'openai/resources/chat/completions'
+
+// 處理模式類型
+type ProcessingMode = 'extractTasks' | 'organizeMeetingNotes'
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { messages, image, calendarTasks, userInfo, projects, userId } = body
+    const { messages, image, calendarTasks, userInfo, projects, userId, processingModes } = body
+
+    // 解析處理模式（預設兩者都啟用）
+    const modes: ProcessingMode[] = processingModes || ['extractTasks', 'organizeMeetingNotes']
+    const enableExtractTasks = modes.includes('extractTasks')
+    const enableOrganizeMeetingNotes = modes.includes('organizeMeetingNotes')
+
+    // Debug log
+    console.log('[Chat Stream] 處理模式:', { modes, enableExtractTasks, enableOrganizeMeetingNotes })
 
     // 取得最後一條使用者訊息
     const lastUserMessage = messages.filter((m: { role: string }) => m.role === 'user').pop()
@@ -90,8 +101,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 檢查是否為排程相關對話，啟用 Function Calling
-    const enableFunctionCalling = lastUserMessage && isSchedulingRelated(lastUserMessage.content) && userId
+    // 檢查是否為排程相關或會議記錄相關對話，啟用 Function Calling
+    const isSchedulingContent = lastUserMessage && isSchedulingRelated(lastUserMessage.content)
+    const isMeetingContent = lastUserMessage && isMeetingNotesRelated(lastUserMessage.content)
+
+    // 啟用條件：有 userId 且（排程相關 或 用戶選擇了會議記錄模式且內容相關）
+    const enableFunctionCalling = userId && (
+      isSchedulingContent ||
+      (enableOrganizeMeetingNotes && isMeetingContent)
+    )
 
     // 如果啟用 Function Calling，加入排程相關提示
     if (enableFunctionCalling) {
@@ -151,6 +169,24 @@ generateSmartSchedule({
 `
     }
 
+    // 如果用戶只選擇「整理會議記錄」模式，加入提示引導 AI 使用該功能
+    if (enableOrganizeMeetingNotes && !enableExtractTasks && enableFunctionCalling) {
+      systemPrompt += `\n
+## 📝 會議記錄整理模式
+
+使用者已選擇「只整理會議記錄」模式。當收到任何文字內容時，請使用 **organizeMeetingNotes** 函數來整理成結構化的會議記錄格式。
+
+使用方式：
+\`\`\`
+organizeMeetingNotes({
+  rawContent: "使用者提供的原始內容"
+})
+\`\`\`
+
+**重要**：在此模式下，不需要萃取任務，只需整理會議記錄內容。
+`
+    }
+
     // 構建訊息陣列
     const chatMessages: ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
@@ -196,9 +232,26 @@ generateSmartSchedule({
       stream_options: { include_usage: true },
     }
 
-    // 如果啟用 Function Calling，加入 tools
+    // 如果啟用 Function Calling，加入 tools（根據 processingModes 過濾）
     if (enableFunctionCalling) {
-      apiParams.tools = AI_FUNCTIONS
+      // 根據 processingModes 過濾可用的 AI Functions
+      let filteredFunctions = AI_FUNCTIONS
+
+      // 如果只選「萃取任務」，排除 organizeMeetingNotes
+      if (enableExtractTasks && !enableOrganizeMeetingNotes) {
+        filteredFunctions = AI_FUNCTIONS.filter(
+          fn => fn.function.name !== 'organizeMeetingNotes'
+        )
+      }
+
+      // 如果只選「整理會議記錄」，只保留 organizeMeetingNotes
+      if (!enableExtractTasks && enableOrganizeMeetingNotes) {
+        filteredFunctions = AI_FUNCTIONS.filter(
+          fn => fn.function.name === 'organizeMeetingNotes'
+        )
+      }
+
+      apiParams.tools = filteredFunctions
       apiParams.tool_choice = 'auto'
     }
 
