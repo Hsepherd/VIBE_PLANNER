@@ -271,6 +271,16 @@ export default function InputArea() {
                 // AI 學習到了用戶的排程偏好
                 console.log('[InputArea] AI 學習到偏好:', data.preference)
                 // 可選：未來可加入 toast 通知元件
+              } else if (data.type === 'meeting_notes_result') {
+                // 收到會議記錄整理結果，設定到 store
+                console.log('[InputArea] 收到會議記錄整理結果:', data.data)
+                const setPendingMeetingNotes = useAppStore.getState().setPendingMeetingNotes
+                setPendingMeetingNotes({
+                  id: crypto.randomUUID(),
+                  timestamp: new Date(),
+                  organized: data.data.organized,
+                  markdown: data.data.markdown,
+                })
               } else if (data.type === 'done') {
                 // 解析完整內容
                 const parsed = parseAIResponse(fullContent)

@@ -1,11 +1,12 @@
 'use client'
 
 import { useRef, useEffect, useState, useMemo } from 'react'
-import { useAppStore, type AppState, type Message, type ProcessedTask, type ProcessedTaskGroup, type PendingTaskGroup, type ExtractedTask, type PendingCategorizationGroup, type TaskCategorizationItem, type PendingSchedulePreview } from '@/lib/store'
+import { useAppStore, type AppState, type Message, type ProcessedTask, type ProcessedTaskGroup, type PendingTaskGroup, type ExtractedTask, type PendingCategorizationGroup, type TaskCategorizationItem, type PendingSchedulePreview, type PendingMeetingNotes } from '@/lib/store'
 import { SchedulePreview } from '@/components/SchedulePreview'
 import { useSupabaseTasks } from '@/lib/useSupabaseTasks'
 import { useAuth } from '@/lib/useAuth'
 import { useSupabaseProjects } from '@/lib/useSupabaseProjects'
+import { useSupabaseGroups } from '@/lib/useSupabaseGroups'
 import MessageBubble from './MessageBubble'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -19,7 +20,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Check, X, CheckSquare, Square, Clock, Loader2, Eye, ThumbsUp, ThumbsDown, Pencil, RefreshCw, AlertTriangle } from 'lucide-react'
+import { Check, X, CheckSquare, Square, Clock, Loader2, Eye, ThumbsUp, ThumbsDown, Pencil, RefreshCw, AlertTriangle, Copy } from 'lucide-react'
+import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import {
   Popover,
@@ -151,6 +153,10 @@ export default function ChatWindow() {
   const pendingSchedulePreview = useAppStore((state: AppState) => state.pendingSchedulePreview)
   const clearPendingSchedulePreview = useAppStore((state: AppState) => state.clearPendingSchedulePreview)
 
+  // 待顯示的會議記錄
+  const pendingMeetingNotes = useAppStore((state: AppState) => state.pendingMeetingNotes)
+  const clearPendingMeetingNotes = useAppStore((state: AppState) => state.clearPendingMeetingNotes)
+
   const scrollRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -163,6 +169,18 @@ export default function ChatWindow() {
   // 編輯負責人狀態
   const [editingAssignee, setEditingAssignee] = useState<{ groupId: string; taskIndex: number } | null>(null)
   const [assigneeInputValue, setAssigneeInputValue] = useState('')
+
+  // 組別相關
+  const { groups: availableGroups } = useSupabaseGroups()
+
+  // 編輯組別 state
+  const [editingGroup, setEditingGroup] = useState<{groupId: string, taskIndex: number} | null>(null)
+  const [groupInputValue, setGroupInputValue] = useState('')
+
+  // 編輯專案 state
+  const [editingProject, setEditingProject] = useState<{groupId: string, taskIndex: number} | null>(null)
+  const [projectInputValue, setProjectInputValue] = useState('')
+
   // 重新生成狀態
   const [isRegenerating, setIsRegenerating] = useState<string | null>(null) // groupId 或 'single-{groupId}-{taskIndex}'
 
@@ -285,6 +303,22 @@ export default function ChatWindow() {
   const cancelAssigneeEdit = () => {
     setEditingAssignee(null)
     setAssigneeInputValue('')
+  }
+
+  // 確認組別編輯
+  const confirmGroupEdit = (groupId: string, taskIndex: number) => {
+    if (!groupInputValue.trim()) return
+    updatePendingTask(groupId, taskIndex, { group: groupInputValue.trim() })
+    setEditingGroup(null)
+    setGroupInputValue('')
+  }
+
+  // 確認專案編輯
+  const confirmProjectEdit = (groupId: string, taskIndex: number) => {
+    if (!projectInputValue.trim()) return
+    updatePendingTask(groupId, taskIndex, { project: projectInputValue.trim() })
+    setEditingProject(null)
+    setProjectInputValue('')
   }
 
   // 取得當前查看的任務
@@ -1151,16 +1185,116 @@ ${group.sourceContext}
                                       {task.priority}
                                     </Badge>
                                   )}
-                                  {task.project && (
-                                    <Badge variant="outline" className="text-xs py-0 bg-purple-50 text-purple-700 border-purple-200">
-                                      📁 {task.project}
-                                    </Badge>
-                                  )}
-                                  {task.group && (
-                                    <Badge variant="outline" className="text-xs py-0 bg-blue-50 text-blue-700 border-blue-200">
-                                      {task.group}
-                                    </Badge>
-                                  )}
+                                  {/* 專案 Badge（可編輯） */}
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <button
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="inline-flex items-center gap-1 text-xs py-0.5 px-2 rounded-full border bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100 transition-colors"
+                                      >
+                                        📁 {task.project || '未設定'}
+                                        <Pencil className="h-2.5 w-2.5 text-purple-500" />
+                                      </button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-56 p-2" align="start" onClick={(e) => e.stopPropagation()}>
+                                      <div className="text-xs text-muted-foreground mb-2">選擇或輸入專案</div>
+                                      <div className="space-y-2">
+                                        {/* 現有專案列表 */}
+                                        <div className="max-h-32 overflow-y-auto space-y-1">
+                                          {projects.filter(p => p.status === 'active').map(p => (
+                                            <button
+                                              key={p.id}
+                                              onClick={() => {
+                                                updatePendingTask(group.id, taskIndex, { project: p.name })
+                                              }}
+                                              className={`w-full text-left text-xs px-2 py-1 rounded hover:bg-muted ${
+                                                task.project === p.name ? 'bg-purple-100 text-purple-700' : ''
+                                              }`}
+                                            >
+                                              📁 {p.name}
+                                            </button>
+                                          ))}
+                                        </div>
+                                        {/* 手動輸入 */}
+                                        <div className="flex items-center gap-1 pt-2 border-t">
+                                          <Input
+                                            value={projectInputValue}
+                                            onChange={(e) => setProjectInputValue(e.target.value)}
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') {
+                                                confirmProjectEdit(group.id, taskIndex)
+                                              }
+                                            }}
+                                            className="h-7 text-xs"
+                                            placeholder="或輸入新專案名"
+                                            onFocus={() => setProjectInputValue(task.project || '')}
+                                          />
+                                          <Button
+                                            size="sm"
+                                            className="h-7 px-2"
+                                            onClick={() => confirmProjectEdit(group.id, taskIndex)}
+                                          >
+                                            確認
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    </PopoverContent>
+                                  </Popover>
+                                  {/* 組別 Badge（可編輯） */}
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <button
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="inline-flex items-center gap-1 text-xs py-0.5 px-2 rounded-full border bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 transition-colors"
+                                      >
+                                        {task.group || '未設定組別'}
+                                        <Pencil className="h-2.5 w-2.5 text-blue-500" />
+                                      </button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-48 p-2" align="start" onClick={(e) => e.stopPropagation()}>
+                                      <div className="text-xs text-muted-foreground mb-2">選擇或輸入組別</div>
+                                      <div className="space-y-2">
+                                        {/* 現有組別列表 */}
+                                        <div className="max-h-32 overflow-y-auto space-y-1">
+                                          {availableGroups.map(g => (
+                                            <button
+                                              key={g.id}
+                                              onClick={() => {
+                                                updatePendingTask(group.id, taskIndex, { group: g.name })
+                                              }}
+                                              className={`w-full text-left text-xs px-2 py-1 rounded hover:bg-muted ${
+                                                task.group === g.name ? 'bg-blue-100 text-blue-700' : ''
+                                              }`}
+                                            >
+                                              {g.name}
+                                            </button>
+                                          ))}
+                                        </div>
+                                        {/* 手動輸入 */}
+                                        <div className="flex items-center gap-1 pt-2 border-t">
+                                          <Input
+                                            value={groupInputValue}
+                                            onChange={(e) => setGroupInputValue(e.target.value)}
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') {
+                                                confirmGroupEdit(group.id, taskIndex)
+                                              }
+                                            }}
+                                            className="h-7 text-xs"
+                                            placeholder="或輸入新組別"
+                                            onFocus={() => setGroupInputValue(task.group || '')}
+                                          />
+                                          <Button
+                                            size="sm"
+                                            className="h-7 px-2"
+                                            onClick={() => confirmGroupEdit(group.id, taskIndex)}
+                                          >
+                                            確認
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    </PopoverContent>
+                                  </Popover>
                                 </div>
                               </div>
                               <div className="flex items-center gap-1 shrink-0 mt-1">
@@ -1607,6 +1741,113 @@ ${group.sourceContext}
                     conflictSummary={pendingSchedulePreview.conflictSummary}
                   />
                 </div>
+              </div>
+            )}
+
+            {/* 整理後的會議記錄 */}
+            {pendingMeetingNotes && pendingMeetingNotes.organized && (
+              <div className="py-4 px-4">
+                <Card className="p-4 border-2 border-teal-500/50 bg-teal-50/30 dark:bg-teal-950/20 max-w-3xl mx-auto">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-semibold flex items-center gap-2 text-teal-800 dark:text-teal-300">
+                      <span>📋</span> {pendingMeetingNotes.organized.title}
+                    </h3>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          navigator.clipboard.writeText(pendingMeetingNotes.markdown || '')
+                          toast.success('已複製 Markdown 到剪貼簿')
+                        }}
+                      >
+                        <Copy className="h-4 w-4 mr-1" />
+                        複製 Markdown
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={clearPendingMeetingNotes}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* 會議資訊 */}
+                  <div className="text-sm text-muted-foreground mb-4">
+                    <span className="mr-4">📅 {pendingMeetingNotes.organized.date}</span>
+                    {pendingMeetingNotes.organized.participants?.length > 0 && (
+                      <span>👥 {pendingMeetingNotes.organized.participants.join('、')}</span>
+                    )}
+                  </div>
+
+                  {/* 討論要點 */}
+                  {pendingMeetingNotes.organized.discussionPoints?.length > 0 && (
+                    <div className="mb-4">
+                      <h4 className="text-sm font-medium mb-2 text-teal-700 dark:text-teal-400">💬 討論要點</h4>
+                      <div className="space-y-2">
+                        {pendingMeetingNotes.organized.discussionPoints.map((point: { topic: string; details: string }, i: number) => (
+                          <div key={i} className="text-sm pl-4 border-l-2 border-teal-300 dark:border-teal-700">
+                            <p className="font-medium text-teal-800 dark:text-teal-300">{point.topic}</p>
+                            <p className="text-muted-foreground">{point.details}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 決議事項 */}
+                  {pendingMeetingNotes.organized.decisions?.length > 0 && (
+                    <div className="mb-4">
+                      <h4 className="text-sm font-medium mb-2 text-green-700 dark:text-green-400">✅ 決議事項</h4>
+                      <ul className="text-sm space-y-1">
+                        {pendingMeetingNotes.organized.decisions.map((d: string, i: number) => (
+                          <li key={i} className="flex items-start gap-2">
+                            <span className="text-green-600 shrink-0">•</span>
+                            <span>{d}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* 待辦任務 */}
+                  {pendingMeetingNotes.organized.actionItems?.length > 0 && (
+                    <div className="mb-4">
+                      <h4 className="text-sm font-medium mb-2 text-amber-700 dark:text-amber-400">📝 待辦任務</h4>
+                      <ul className="text-sm space-y-1">
+                        {pendingMeetingNotes.organized.actionItems.map((item: { task: string; assignee?: string; dueDate?: string }, i: number) => (
+                          <li key={i} className="flex items-center gap-2">
+                            <Square className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <span>{item.task}</span>
+                            {item.assignee && (
+                              <Badge variant="outline" className="text-xs py-0">@{item.assignee}</Badge>
+                            )}
+                            {item.dueDate && (
+                              <span className="text-xs text-amber-600">{item.dueDate}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* 下一步 */}
+                  {pendingMeetingNotes.organized.nextSteps?.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-medium mb-2 text-blue-700 dark:text-blue-400">🚀 下一步</h4>
+                      <ul className="text-sm space-y-1">
+                        {pendingMeetingNotes.organized.nextSteps.map((step: string, i: number) => (
+                          <li key={i} className="flex items-start gap-2">
+                            <span className="text-blue-600 shrink-0">•</span>
+                            <span>{step}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </Card>
               </div>
             )}
 

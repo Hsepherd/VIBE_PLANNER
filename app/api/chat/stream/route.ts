@@ -320,6 +320,18 @@ generateSmartSchedule({
                     data: scheduleData,
                   })}\n\n`))
                 }
+
+                // 如果是會議記錄整理函數，發送會議記錄事件
+                if (toolCall.function.name === 'organizeMeetingNotes' && result.success && result.data) {
+                  const meetingData = result.data as {
+                    organized: unknown
+                    markdown: string
+                  }
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                    type: 'meeting_notes_result',
+                    data: meetingData,
+                  })}\n\n`))
+                }
               } catch (funcError) {
                 console.error(`[Chat Stream] Function ${toolCall.function.name} 執行失敗:`, funcError)
                 const toolMessage: ChatCompletionToolMessageParam = {

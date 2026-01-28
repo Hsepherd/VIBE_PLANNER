@@ -9,6 +9,7 @@ import { estimateTaskTime, estimateMultipleTasksTime } from './handlers/estimate
 import { createSchedulePreview } from './handlers/schedulePreview'
 import { updateTaskEstimate } from './handlers/updateTaskEstimate'
 import { generateSmartSchedule } from './handlers/scheduleAlgorithm'
+import { organizeMeetingNotes } from './handlers/organizeMeetingNotes'
 import type { AIFunctionName } from './definitions'
 
 // Function 執行上下文
@@ -100,6 +101,13 @@ export async function executeFunctionCall(
           workEnd?: string
           respectDeadlines?: boolean
           maxTasksPerDay?: number
+        })
+        break
+
+      case 'organizeMeetingNotes':
+        result = await organizeMeetingNotes(args as {
+          rawContent: string
+          meetingTitle?: string
         })
         break
 

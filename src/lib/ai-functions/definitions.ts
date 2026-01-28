@@ -243,6 +243,30 @@ export const AI_FUNCTIONS: ChatCompletionTool[] = [
       },
     },
   },
+
+  // 8. 整理會議記錄
+  {
+    type: 'function',
+    function: {
+      name: 'organizeMeetingNotes',
+      description: '整理散亂的會議記錄成結構化格式。當使用者說「整理會議記錄」、「幫我整理這段會議內容」等請求時使用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          rawContent: {
+            type: 'string',
+            description: '原始會議記錄內容',
+          },
+          meetingTitle: {
+            type: 'string',
+            description: '會議標題（可選，AI 可自動推測）',
+          },
+        },
+        required: ['rawContent'],
+        additionalProperties: false,
+      },
+    },
+  },
 ]
 
 // Function 名稱類型
@@ -254,6 +278,7 @@ export type AIFunctionName =
   | 'createSchedulePreview'
   | 'updateTaskEstimate'
   | 'generateSmartSchedule'
+  | 'organizeMeetingNotes'
 
 // 檢查是否為排程相關對話
 export function isSchedulingRelated(message: string): boolean {

@@ -152,6 +152,11 @@ export interface AppState {
   pendingSchedulePreview: PendingSchedulePreview | null
   setPendingSchedulePreview: (preview: PendingSchedulePreview | null) => void
   clearPendingSchedulePreview: () => void
+
+  // 待顯示的會議記錄
+  pendingMeetingNotes: PendingMeetingNotes | null
+  setPendingMeetingNotes: (notes: PendingMeetingNotes | null) => void
+  clearPendingMeetingNotes: () => void
 }
 
 // AI 萃取任務的類型
@@ -317,6 +322,25 @@ export interface PendingSchedulePreview {
   // S-010: 衝突資訊
   conflictCheck?: ConflictCheckResult
   conflictSummary?: string
+}
+
+// 整理後的會議記錄
+export interface OrganizedMeetingNotes {
+  title: string
+  date: string
+  participants: string[]
+  discussionPoints: { topic: string; details: string }[]
+  decisions: string[]
+  actionItems: { task: string; assignee?: string; dueDate?: string }[]
+  nextSteps: string[]
+}
+
+// 待顯示的會議記錄
+export interface PendingMeetingNotes {
+  id: string
+  timestamp: Date
+  organized: OrganizedMeetingNotes
+  markdown: string
 }
 
 // 生成 UUID
@@ -638,6 +662,11 @@ export const useAppStore = create<AppState>()(
       pendingSchedulePreview: null,
       setPendingSchedulePreview: (preview) => set({ pendingSchedulePreview: preview }),
       clearPendingSchedulePreview: () => set({ pendingSchedulePreview: null }),
+
+      // 待顯示的會議記錄
+      pendingMeetingNotes: null,
+      setPendingMeetingNotes: (notes) => set({ pendingMeetingNotes: notes }),
+      clearPendingMeetingNotes: () => set({ pendingMeetingNotes: null }),
     }),
     {
       name: 'vibe-planner-storage',
