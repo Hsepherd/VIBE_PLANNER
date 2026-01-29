@@ -256,16 +256,17 @@ export default function MeetingNotesPage() {
 
       {/* 會議記錄詳細對話框 */}
       <Dialog open={!!selectedNote} onOpenChange={(open) => !open && setSelectedNote(null)}>
-        <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="text-xl">{selectedNote?.title}</DialogTitle>
-            <DialogDescription className="flex items-center gap-4 pt-2">
-              <span className="flex items-center gap-1">
+        <DialogContent className="max-w-5xl max-h-[85vh] flex flex-col p-0">
+          {/* 標題區域 - 添加背景色 */}
+          <DialogHeader className="px-6 py-4 border-b bg-muted/30">
+            <DialogTitle className="text-2xl font-bold">{selectedNote?.title}</DialogTitle>
+            <DialogDescription className="flex flex-wrap items-center gap-3 pt-2 text-sm">
+              <span className="flex items-center gap-1.5">
                 <Calendar className="h-4 w-4" />
                 {selectedNote && format(selectedNote.date, 'yyyy年MM月dd日', { locale: zhTW })}
               </span>
               {selectedNote && selectedNote.participants.length > 0 && (
-                <span className="flex items-center gap-1">
+                <span className="flex items-center gap-1.5">
                   <Users className="h-4 w-4" />
                   {selectedNote.participants.join('、')}
                 </span>
@@ -273,18 +274,23 @@ export default function MeetingNotesPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <ScrollArea className="flex-1 -mx-6 px-6">
+          {/* 內容區域 - 增加內邊距 */}
+          <ScrollArea className="flex-1 px-6 py-4">
             {selectedNote && (
-              <MeetingNotesMarkdown content={selectedNote.markdown} />
+              <MeetingNotesMarkdown
+                content={selectedNote.markdown}
+                className="pb-4"
+              />
             )}
           </ScrollArea>
 
-          <div className="flex justify-between items-center pt-4 border-t">
+          {/* 底部操作區 - 添加背景色 */}
+          <div className="flex justify-between items-center px-6 py-4 border-t bg-muted/30">
             <Button variant="outline" disabled>
               <MessageSquare className="h-4 w-4 mr-2" />
               提問功能（開發中）
             </Button>
-            <Button variant="outline" onClick={() => setSelectedNote(null)}>
+            <Button onClick={() => setSelectedNote(null)}>
               關閉
             </Button>
           </div>
