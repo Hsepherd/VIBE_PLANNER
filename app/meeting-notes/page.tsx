@@ -184,16 +184,16 @@ export default function MeetingNotesPage() {
           </div>
         ) : (
           <ScrollArea className="h-full">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-6">
               {displayNotes.map((note) => (
                 <Card
                   key={note.id}
-                  className="cursor-pointer hover:shadow-lg transition-shadow"
+                  className="group cursor-pointer hover:shadow-xl hover:scale-[1.02] transition-all duration-200 border-2 hover:border-primary/50"
                   onClick={() => setSelectedNote(note)}
                 >
-                  <CardHeader>
+                  <CardHeader className="pb-3">
                     <div className="flex items-start justify-between gap-2">
-                      <CardTitle className="text-lg line-clamp-2">
+                      <CardTitle className="text-lg line-clamp-2 group-hover:text-primary transition-colors">
                         {note.title}
                       </CardTitle>
                       <Button
@@ -203,48 +203,52 @@ export default function MeetingNotesPage() {
                           e.stopPropagation()
                           handleDelete(note.id)
                         }}
-                        className="shrink-0 h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                        className="shrink-0 h-8 w-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2 text-sm">
-                      {/* 日期 */}
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        <Calendar className="h-4 w-4" />
-                        <span>{format(note.date, 'yyyy-MM-dd', { locale: zhTW })}</span>
-                      </div>
+                  <CardContent className="space-y-3">
+                    {/* 日期 */}
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Calendar className="h-4 w-4 shrink-0" />
+                      <span>{format(note.date, 'yyyy-MM-dd', { locale: zhTW })}</span>
+                    </div>
 
-                      {/* 參與者 */}
-                      {note.participants.length > 0 && (
-                        <div className="flex items-start gap-2 text-muted-foreground">
-                          <Users className="h-4 w-4 mt-0.5" />
-                          <span className="line-clamp-1">
-                            {note.participants.join('、')}
-                          </span>
-                        </div>
+                    {/* 參與者 */}
+                    {note.participants.length > 0 && (
+                      <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                        <Users className="h-4 w-4 shrink-0 mt-0.5" />
+                        <span className="line-clamp-2">
+                          {note.participants.join('、')}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* 摘要統計 - 使用網格佈局 */}
+                    <div className="grid grid-cols-2 gap-2 pt-2">
+                      {note.organized.discussionPoints.length > 0 && (
+                        <Badge variant="secondary" className="text-xs justify-center">
+                          <MessageSquare className="h-3 w-3 mr-1" />
+                          {note.organized.discussionPoints.length} 討論
+                        </Badge>
                       )}
-
-                      {/* 摘要統計 */}
-                      <div className="flex flex-wrap gap-2 pt-2">
-                        {note.organized.discussionPoints.length > 0 && (
-                          <Badge variant="outline" className="text-xs">
-                            {note.organized.discussionPoints.length} 個討論要點
-                          </Badge>
-                        )}
-                        {note.organized.decisions.length > 0 && (
-                          <Badge variant="outline" className="text-xs">
-                            {note.organized.decisions.length} 項決議
-                          </Badge>
-                        )}
-                        {note.organized.actionItems.length > 0 && (
-                          <Badge variant="outline" className="text-xs">
-                            {note.organized.actionItems.length} 個待辦
-                          </Badge>
-                        )}
-                      </div>
+                      {note.organized.decisions.length > 0 && (
+                        <Badge variant="secondary" className="text-xs justify-center">
+                          ✓ {note.organized.decisions.length} 決議
+                        </Badge>
+                      )}
+                      {note.organized.actionItems.length > 0 && (
+                        <Badge variant="secondary" className="text-xs justify-center">
+                          □ {note.organized.actionItems.length} 待辦
+                        </Badge>
+                      )}
+                      {note.organized.nextSteps.length > 0 && (
+                        <Badge variant="secondary" className="text-xs justify-center">
+                          → {note.organized.nextSteps.length} 下一步
+                        </Badge>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
