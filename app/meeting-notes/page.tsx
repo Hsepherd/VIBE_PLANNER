@@ -774,6 +774,15 @@ export default function MeetingNotesPage() {
     }
   }
 
+  // 清除聊天記錄
+  const clearChatHistory = () => {
+    if (!currentNote) return
+    setChatByNote(prev => ({
+      ...prev,
+      [currentNote.id]: []
+    }))
+  }
+
   // 排序圖示元件
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) {
@@ -1553,10 +1562,23 @@ export default function MeetingNotesPage() {
 
               {/* 會議問答 */}
               <section className="mb-6">
-                <h2 className="text-lg font-semibold text-[#37352f] mb-3 flex items-center gap-2">
-                  <MessageSquare className="h-5 w-5 text-purple-600" />
-                  會議問答
-                </h2>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-lg font-semibold text-[#37352f] flex items-center gap-2">
+                    <MessageSquare className="h-5 w-5 text-purple-600" />
+                    會議問答
+                  </h2>
+                  {currentChat.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearChatHistory}
+                      className="text-xs text-[#9b9a97] hover:text-[#37352f]"
+                    >
+                      <Trash2 className="h-3 w-3 mr-1" />
+                      清除對話
+                    </Button>
+                  )}
+                </div>
 
                 <div className="bg-[#f7f6f3] rounded-lg p-4">
                   {/* 聊天記錄 */}
