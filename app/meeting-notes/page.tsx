@@ -267,6 +267,14 @@ export default function MeetingNotesPage() {
   const [chatInput, setChatInput] = useState('')
   const [isSendingChat, setIsSendingChat] = useState(false)
 
+  // 建議問題
+  const suggestedQuestions = [
+    '這次會議有哪些重要決議？',
+    '待辦任務有漏掉的嗎？',
+    '誰負責最多任務？',
+    '下一步行動是什麼？',
+  ]
+
   // 執行搜尋
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
@@ -1577,6 +1585,24 @@ export default function MeetingNotesPage() {
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {/* 建議問題 - 僅在沒有對話時顯示 */}
+                  {currentChat.length === 0 && (
+                    <div className="mb-4">
+                      <div className="text-xs text-[#9b9a97] mb-2">建議問題</div>
+                      <div className="flex flex-wrap gap-2">
+                        {suggestedQuestions.map((q, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setChatInput(q)}
+                            className="px-3 py-1.5 text-xs bg-white border border-[#e3e2e0] rounded-full text-[#73726e] hover:bg-purple-50 hover:border-purple-200 hover:text-purple-700 transition-colors"
+                          >
+                            {q}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
 
