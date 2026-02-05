@@ -124,11 +124,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 從資料庫取得會議記錄
+    // 從資料庫取得會議記錄（包含使用者所有權驗證）
     const { data: meetingNote, error: fetchError } = await supabase
       .from('meeting_notes')
       .select('*')
       .eq('id', meetingNoteId)
+      .eq('user_id', user.id)
       .single()
 
     if (fetchError || !meetingNote) {
@@ -154,9 +155,10 @@ export async function POST(request: NextRequest) {
       { role: 'system', content: systemPrompt },
     ]
 
-    // 加入聊天歷史（如果有）
+    // 加入聊天歷史（如果有），限制最多 10 輪對話（20 則訊息）以避免 context 過長
     if (chatHistory && chatHistory.length > 0) {
-      for (const msg of chatHistory) {
+      const recentHistory = chatHistory.slice(-20)
+      for (const msg of recentHistory) {
         messages.push({
           role: msg.role,
           content: msg.content,
