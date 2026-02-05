@@ -635,6 +635,16 @@ export default function MeetingNotesPage() {
   const sendChatMessage = async () => {
     if (!currentNote || !chatInput.trim() || isSendingChat) return
 
+    // 捕獲 noteId 以避免閉包問題
+    const noteId = currentNote.id
+
+    // 準備聊天歷史（只包含 role 和 content）- 在加入新訊息前取得
+    const currentChatHistory = chatByNote[noteId] || []
+    const chatHistory = currentChatHistory.map(msg => ({
+      role: msg.role,
+      content: msg.content
+    }))
+
     const userMessage: ChatMessage = {
       id: `msg-${Date.now()}`,
       role: 'user',
@@ -654,7 +664,7 @@ export default function MeetingNotesPage() {
     // 先加入使用者訊息和 AI 佔位符
     setChatByNote(prev => ({
       ...prev,
-      [currentNote.id]: [...(prev[currentNote.id] || []), userMessage, aiMessage]
+      [noteId]: [...(prev[noteId] || []), userMessage, aiMessage]
     }))
 
     const question = chatInput.trim()
@@ -662,12 +672,6 @@ export default function MeetingNotesPage() {
     setIsSendingChat(true)
 
     try {
-      // 準備聊天歷史（只包含 role 和 content）
-      const currentChatHistory = chatByNote[currentNote.id] || []
-      const chatHistory = currentChatHistory.map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }))
 
       // 呼叫串流 API
       const response = await fetch('/api/meeting-notes/qa', {
@@ -676,7 +680,7 @@ export default function MeetingNotesPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          meetingNoteId: currentNote.id,
+          meetingNoteId: noteId,
           question,
           chatHistory,
         }),
@@ -717,7 +721,7 @@ export default function MeetingNotesPage() {
               accumulatedContent += event.content
               setChatByNote(prev => ({
                 ...prev,
-                [currentNote.id]: prev[currentNote.id].map(msg =>
+                [noteId]: prev[noteId].map(msg =>
                   msg.id === aiMessageId
                     ? { ...msg, content: accumulatedContent }
                     : msg
@@ -727,7 +731,7 @@ export default function MeetingNotesPage() {
               // 完成，使用完整內容更新
               setChatByNote(prev => ({
                 ...prev,
-                [currentNote.id]: prev[currentNote.id].map(msg =>
+                [noteId]: prev[noteId].map(msg =>
                   msg.id === aiMessageId
                     ? { ...msg, content: event.fullContent || accumulatedContent }
                     : msg
@@ -751,7 +755,7 @@ export default function MeetingNotesPage() {
       // 更新 AI 訊息顯示錯誤
       setChatByNote(prev => ({
         ...prev,
-        [currentNote.id]: prev[currentNote.id].map(msg =>
+        [noteId]: prev[noteId].map(msg =>
           msg.id === aiMessageId
             ? { ...msg, content: `❌ 錯誤：${errorMessage}` }
             : msg
