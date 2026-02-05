@@ -1568,7 +1568,12 @@ export default function MeetingNotesPage() {
                             {msg.role === 'user' ? '你' : 'AI 助手'}
                           </div>
                           <div className="text-sm text-[#37352f] whitespace-pre-wrap">
-                            {msg.content}
+                            {msg.content || (
+                              <span className="flex items-center gap-2 text-[#9b9a97]">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                正在思考...
+                              </span>
+                            )}
                           </div>
                         </div>
                       ))}
