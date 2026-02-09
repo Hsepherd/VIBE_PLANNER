@@ -1227,12 +1227,16 @@ export default function CalendarPage() {
                           <div className="flex items-start gap-0.5 h-full">
                             <span className={`w-1 h-full rounded-full shrink-0 ${colors.dot}`} />
                             <div className="flex-1 min-w-0 overflow-hidden">
-                              <p className={`font-medium truncate leading-tight text-[11px] ${displayTask.status === 'completed' ? 'line-through' : ''}`}>
+                              <p className={`font-medium leading-tight text-[11px] break-words ${displayTask.status === 'completed' ? 'line-through' : ''}`}>
                                 {displayTask.title}
                               </p>
                               {height > 35 && (
-                                <p className="text-[10px] opacity-75 truncate">
-                                  {format(displayTime, 'HH:mm')}{inferredEndTime ? ` - ${format(inferredEndTime, 'HH:mm')}` : ''}
+                                <p className="text-[10px] opacity-75 whitespace-nowrap">
+                                  {(() => {
+                                    // 緊湊時間格式：整點省略 :00（如 12 代替 12:00）
+                                    const fmtShort = (d: Date) => d.getMinutes() === 0 ? format(d, 'H') : format(d, 'H:mm')
+                                    return `${fmtShort(displayTime)}${inferredEndTime ? `-${fmtShort(inferredEndTime)}` : ''}`
+                                  })()}
                                 </p>
                               )}
                             </div>
