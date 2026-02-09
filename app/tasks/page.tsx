@@ -28,6 +28,7 @@ import { useSupabaseTasks, type Task } from '@/lib/useSupabaseTasks'
 import { useSupabaseProjects, type Project } from '@/lib/useSupabaseProjects'
 import { RecurrenceSelector, RecurrenceBadge } from '@/components/task/RecurrenceSelector'
 import { TaskDetailDialog } from '@/components/task/TaskDetailDialog'
+import { ManageOptionsDialog } from '@/components/task/ManageOptionsDialog'
 import { getTeamMembers, addTeamMember, removeTeamMember } from '@/lib/team-members'
 import { getTags, addTag, removeTag, getTagColor, TAG_COLORS, type Tag } from '@/lib/tags'
 import { getGroups, addGroup, removeGroup, getGroupColor, GROUP_COLORS, type Group } from '@/lib/groups'
@@ -90,6 +91,8 @@ import {
   ChevronsUpDown,
   ChevronUp,
   Clock,
+  Columns3,
+  SlidersHorizontal,
 } from 'lucide-react'
 
 type SortMode = 'priority' | 'dueDate' | 'assignee' | 'tag' | 'group' | 'project' | 'createdAt'
@@ -331,6 +334,29 @@ export default function TasksPage() {
   const [createdAtFilter, setCreatedAtFilter] = useState<string | null>(null)
   const [createdAtDate, setCreatedAtDate] = useState<Date | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [showManageDialog, setShowManageDialog] = useState(false)
+
+  // 欄位顯示/隱藏（從 localStorage 載入）
+  const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(() => {
+    if (typeof window === 'undefined') return {}
+    try {
+      const saved = localStorage.getItem('vibe-planner-column-visibility')
+      if (saved) return JSON.parse(saved)
+    } catch {}
+    return {}
+  })
+
+  const setColumnVisible = useCallback((col: string, visible: boolean) => {
+    setColumnVisibility(prev => {
+      const next = { ...prev, [col]: visible }
+      localStorage.setItem('vibe-planner-column-visibility', JSON.stringify(next))
+      return next
+    })
+  }, [])
+
+  const isColumnVisible = useCallback((col: string) => {
+    return columnVisibility[col] !== false // 預設全部顯示
+  }, [columnVisibility])
 
   // 從 localStorage 初始化排序模式
   useEffect(() => {
@@ -1207,12 +1233,14 @@ export default function TasksPage() {
     dueDate: 110,
     priority: 80,
     project: 100,
+    group: 100,
+    tags: 120,
     createdAt: 100,
   })
 
   // 欄位順序（可拖曳調整）
   const [columnOrder, setColumnOrder] = useState<string[]>([
-    'assignee', 'startDate', 'dueDate', 'priority', 'project', 'createdAt'
+    'assignee', 'startDate', 'dueDate', 'priority', 'project', 'group', 'tags', 'createdAt'
   ])
 
   // 拖曳調整欄位寬度
@@ -1383,6 +1411,8 @@ export default function TasksPage() {
     const [assigneeOpen, setAssigneeOpen] = useState(false)
     const [groupOpen, setGroupOpen] = useState(false)
     const [tagOpen, setTagOpen] = useState(false)
+    const [groupColOpen, setGroupColOpen] = useState(false)
+    const [tagColOpen, setTagColOpen] = useState(false)
     const [projectOpen, setProjectOpen] = useState(false)
     const [priorityOpen, setPriorityOpen] = useState(false)
     const [statusOpen, setStatusOpen] = useState(false)
@@ -1513,8 +1543,8 @@ export default function TasksPage() {
           )}
         </div>
 
-        {/* 動態欄位 - 根據 columnOrder 順序渲染 */}
-        {columnOrder.map((colKey) => {
+        {/* 動態欄位 - 根據 visibleColumnOrder 順序渲染 */}
+        {visibleColumnOrder.map((colKey) => {
           const width = columnWidths[colKey as keyof typeof columnWidths]
 
           // 負責人欄位
@@ -1679,6 +1709,85 @@ export default function TasksPage() {
                     >
                       <Plus className="h-4 w-4 mr-2" />
                       新增專案...
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )
+          }
+
+          // 組別欄位
+          if (colKey === 'group') {
+            const groupColors = task.groupName ? getGroupColor(task.groupName) : null
+            return (
+              <div key={colKey} className="h-12 flex items-center shrink-0" style={{ width }}>
+                <DropdownMenu open={groupColOpen} onOpenChange={setGroupColOpen}>
+                  <DropdownMenuTrigger asChild>
+                    <button className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full text-gray-600">
+                      {task.groupName && groupColors ? (
+                        <span className={`px-1.5 py-0.5 rounded text-xs ${groupColors.bg} ${groupColors.text}`}>{task.groupName}</span>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-40">
+                    {availableGroups.map((group) => {
+                      const gc = getGroupColor(group.name)
+                      return (
+                        <DropdownMenuItem key={group.name} onClick={() => { handleUpdateTask(task.id, { groupName: group.name }); setGroupColOpen(false) }} className="text-xs">
+                          <span className={`px-1.5 py-0.5 rounded mr-2 ${gc.bg} ${gc.text}`}>{group.name}</span>
+                          {task.groupName === group.name && <Check className="h-3 w-3 ml-auto" />}
+                        </DropdownMenuItem>
+                      )
+                    })}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { groupName: undefined })}>
+                      <X className="h-3 w-3 mr-2" />清除組別
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )
+          }
+
+          // 標籤欄位
+          if (colKey === 'tags') {
+            return (
+              <div key={colKey} className="h-12 flex items-center shrink-0 overflow-hidden" style={{ width }}>
+                <DropdownMenu open={tagColOpen} onOpenChange={setTagColOpen}>
+                  <DropdownMenuTrigger asChild>
+                    <button className="inline-flex items-center gap-1 text-xs px-2 py-1.5 rounded hover:bg-gray-100 transition-colors w-full h-full overflow-hidden">
+                      {(task.tags && task.tags.length > 0) ? (
+                        <div className="flex gap-1 overflow-hidden">
+                          {task.tags.map(tag => {
+                            const tc = getTagColor(tag)
+                            return <span key={tag} className={`px-1.5 py-0.5 rounded text-xs whitespace-nowrap ${tc.bg} ${tc.text}`}>{tag}</span>
+                          })}
+                        </div>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-40">
+                    {availableTags.map((tag) => {
+                      const tc = getTagColor(tag.name)
+                      const isActive = (task.tags || []).includes(tag.name)
+                      return (
+                        <DropdownMenuItem key={tag.name} onClick={() => {
+                          const currentTags = task.tags || []
+                          const newTags = isActive ? currentTags.filter(t => t !== tag.name) : [...currentTags, tag.name]
+                          handleUpdateTask(task.id, { tags: newTags })
+                        }} className="text-xs">
+                          <span className={`px-1.5 py-0.5 rounded mr-2 ${tc.bg} ${tc.text}`}>{tag.name}</span>
+                          {isActive && <Check className="h-3 w-3 ml-auto" />}
+                        </DropdownMenuItem>
+                      )
+                    })}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="text-xs text-gray-500" onClick={() => handleUpdateTask(task.id, { tags: [] })}>
+                      <X className="h-3 w-3 mr-2" />清除標籤
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -1858,7 +1967,7 @@ export default function TasksPage() {
     groupKey: string
     teamMembers: string[]
     priorityConfig: PriorityConfig
-    columnWidths: { assignee: number; startDate: number; dueDate: number; priority: number; project: number; createdAt: number }
+    columnWidths: { assignee: number; startDate: number; dueDate: number; priority: number; project: number; group: number; tags: number; createdAt: number }
     columnOrder: string[]
     projects: Project[]
     onSubmit: (data: { title: string; assignee?: string; startDate?: Date; dueDate?: Date; priority: Task['priority']; projectId?: string }) => void
@@ -1916,8 +2025,8 @@ export default function TasksPage() {
           />
         </div>
 
-        {/* 動態欄位 - 根據 columnOrder 順序渲染 */}
-        {columnOrder.map((colKey) => {
+        {/* 動態欄位 - 根據 visibleColumnOrder 順序渲染 */}
+        {visibleColumnOrder.map((colKey) => {
           const width = columnWidths[colKey as keyof typeof columnWidths]
 
           // 負責人欄位
@@ -2064,6 +2173,24 @@ export default function TasksPage() {
             )
           }
 
+          // 組別欄位（新增時不顯示）
+          if (colKey === 'group') {
+            return (
+              <div key={colKey} className="h-11 flex items-center shrink-0" style={{ width }}>
+                <span className="text-xs text-gray-400 px-2">-</span>
+              </div>
+            )
+          }
+
+          // 標籤欄位（新增時不顯示）
+          if (colKey === 'tags') {
+            return (
+              <div key={colKey} className="h-11 flex items-center shrink-0" style={{ width }}>
+                <span className="text-xs text-gray-400 px-2">-</span>
+              </div>
+            )
+          }
+
           // 加入日期欄位（新增時不顯示）
           if (colKey === 'createdAt') {
             return (
@@ -2138,8 +2265,15 @@ export default function TasksPage() {
     dueDate: { label: '截止日', icon: <Calendar className="h-4 w-4 shrink-0 mr-1" />, sortable: true, sortField: 'dueDate' },
     priority: { label: '優先級', icon: null, sortable: true, sortField: 'priority' },
     project: { label: '專案', icon: <FolderKanban className="h-4 w-4 shrink-0 mr-1" />, sortable: true, sortField: 'project' },
+    group: { label: '組別', icon: <Users className="h-4 w-4 shrink-0 mr-1" /> },
+    tags: { label: '標籤', icon: <TagIcon className="h-4 w-4 shrink-0 mr-1" /> },
     createdAt: { label: '加入日期', icon: <Clock className="h-4 w-4 shrink-0 mr-1" />, sortable: true, sortField: 'createdAt' },
   }
+
+  // 根據 columnVisibility 過濾可見欄位
+  const visibleColumnOrder = useMemo(() => {
+    return columnOrder.filter(col => isColumnVisible(col))
+  }, [columnOrder, isColumnVisible])
 
   // 欄位拖曳狀態
   const [draggingColumn, setDraggingColumn] = useState<string | null>(null)
@@ -2210,8 +2344,8 @@ export default function TasksPage() {
           {secondarySort.field !== 'title' && <ChevronsUpDown className="h-3 w-3 ml-1 opacity-0 group-hover:opacity-50" />}
         </button>
       </div>
-      {/* 動態欄位 - 根據 columnOrder 順序渲染 */}
-      {columnOrder.map((colKey) => {
+      {/* 動態欄位 - 根據 visibleColumnOrder 順序渲染 */}
+      {visibleColumnOrder.map((colKey) => {
         const config = columnConfig[colKey]
         if (!config) return null
         const width = columnWidths[colKey as keyof typeof columnWidths]
@@ -2223,6 +2357,8 @@ export default function TasksPage() {
           (colKey === 'startDate' && startDateFilter) ||
           (colKey === 'dueDate' && dueDateFilter) ||
           (colKey === 'project' && projectFilter) ||
+          (colKey === 'group' && groupFilter) ||
+          (colKey === 'tags' && tagFilter) ||
           (colKey === 'createdAt' && createdAtFilter)
         )
 
@@ -2356,6 +2492,40 @@ export default function TasksPage() {
                         ))}
                       </>
                     )}
+                    {colKey === 'group' && (
+                      <>
+                        <DropdownMenuItem onClick={() => setGroupFilter(null)} className={!groupFilter ? 'bg-muted' : ''}>
+                          全部組別
+                          {!groupFilter && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                        {usedGroups.map(group => {
+                          const colors = getGroupColor(group)
+                          return (
+                            <DropdownMenuItem key={group} onClick={() => setGroupFilter(group)} className={groupFilter === group ? 'bg-muted' : ''}>
+                              <span className={`px-1.5 py-0.5 rounded text-xs ${colors.bg} ${colors.text}`}>{group}</span>
+                              {groupFilter === group && <Check className="h-4 w-4 ml-auto" />}
+                            </DropdownMenuItem>
+                          )
+                        })}
+                      </>
+                    )}
+                    {colKey === 'tags' && (
+                      <>
+                        <DropdownMenuItem onClick={() => setTagFilter(null)} className={!tagFilter ? 'bg-muted' : ''}>
+                          全部標籤
+                          {!tagFilter && <Check className="h-4 w-4 ml-auto" />}
+                        </DropdownMenuItem>
+                        {usedTags.map(tag => {
+                          const colors = getTagColor(tag)
+                          return (
+                            <DropdownMenuItem key={tag} onClick={() => setTagFilter(tag)} className={tagFilter === tag ? 'bg-muted' : ''}>
+                              <span className={`px-1.5 py-0.5 rounded text-xs ${colors.bg} ${colors.text}`}>{tag}</span>
+                              {tagFilter === tag && <Check className="h-4 w-4 ml-auto" />}
+                            </DropdownMenuItem>
+                          )
+                        })}
+                      </>
+                    )}
                     {colKey === 'createdAt' && (
                       <>
                         <DropdownMenuItem onClick={() => { setCreatedAtFilter(null); setCreatedAtDate(null) }} className={!createdAtFilter ? 'bg-muted' : ''}>
@@ -2474,7 +2644,7 @@ export default function TasksPage() {
                           teamMembers={teamMembers}
                           priorityConfig={priorityConfig}
                           columnWidths={columnWidths}
-                          columnOrder={columnOrder}
+                          columnOrder={visibleColumnOrder}
                           projects={projects}
                           onSubmit={(data) => handleAddTaskInGroup(key, data)}
                           onCancel={() => setAddingInGroup(null)}
@@ -2607,7 +2777,7 @@ export default function TasksPage() {
                           teamMembers={teamMembers}
                           priorityConfig={priorityConfig}
                           columnWidths={columnWidths}
-                          columnOrder={columnOrder}
+                          columnOrder={visibleColumnOrder}
                           projects={projects}
                           onSubmit={(data) => handleAddTaskInGroup(key, data)}
                           onCancel={() => setAddingInGroup(null)}
@@ -2897,6 +3067,75 @@ export default function TasksPage() {
               </DropdownMenuContent>
             </DropdownMenu>
 
+            {/* 欄位設定 */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className="flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-md hover:bg-gray-50 transition-colors">
+                  <Columns3 className="h-3.5 w-3.5" />
+                  欄位
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-52 p-3">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-medium text-gray-500">顯示欄位</span>
+                    <div className="flex gap-1">
+                      <button
+                        className="text-xs text-blue-600 hover:underline"
+                        onClick={() => {
+                          const allVisible: Record<string, boolean> = {}
+                          columnOrder.forEach(col => { allVisible[col] = true })
+                          setColumnVisibility(allVisible)
+                          localStorage.setItem('vibe-planner-column-visibility', JSON.stringify(allVisible))
+                        }}
+                      >
+                        全選
+                      </button>
+                      <span className="text-gray-300">|</span>
+                      <button
+                        className="text-xs text-blue-600 hover:underline"
+                        onClick={() => {
+                          const noneVisible: Record<string, boolean> = {}
+                          columnOrder.forEach(col => { noneVisible[col] = false })
+                          setColumnVisibility(noneVisible)
+                          localStorage.setItem('vibe-planner-column-visibility', JSON.stringify(noneVisible))
+                        }}
+                      >
+                        全不選
+                      </button>
+                    </div>
+                  </div>
+                  {columnOrder.map((col) => {
+                    const config = columnConfig[col]
+                    if (!config) return null
+                    return (
+                      <label key={col} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer text-sm">
+                        <input
+                          type="checkbox"
+                          checked={isColumnVisible(col)}
+                          onChange={(e) => setColumnVisible(col, e.target.checked)}
+                          className="rounded border-gray-300"
+                        />
+                        <span className="flex items-center gap-1">
+                          {config.icon}
+                          {config.label}
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </PopoverContent>
+            </Popover>
+
+            {/* 管理 */}
+            <button
+              onClick={() => setShowManageDialog(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-md hover:bg-gray-50 transition-colors"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              管理
+            </button>
+
           </div>
         </div>
 
@@ -3000,6 +3239,18 @@ export default function TasksPage() {
         onRemoveGroup={handleRemoveGroup}
         projects={projects}
         onAddProject={handleAddProject}
+      />
+
+      <ManageOptionsDialog
+        open={showManageDialog}
+        onOpenChange={setShowManageDialog}
+        projects={projects}
+        onAddProject={async (name) => { await handleAddProject(name) }}
+        onUpdateProject={async (id, name) => { await handleUpdateProject(id, name) }}
+        onDeleteProject={async (id) => { await handleDeleteProject(id) }}
+        onGroupsChange={() => setAvailableGroups(getGroups())}
+        onTagsChange={() => setAvailableTags(getTags())}
+        onMembersChange={() => setTeamMembers(getTeamMembers())}
       />
 
       {/* 底部固定批次操作工具列 */}

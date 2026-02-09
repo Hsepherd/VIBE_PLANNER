@@ -72,6 +72,25 @@ export function removeTag(name: string): Tag[] {
   return updated
 }
 
+// 編輯標籤（名稱和顏色）
+export function editTag(oldName: string, newName: string, newColor?: string): Tag[] {
+  const tags = getTags()
+  const trimmedName = newName.trim()
+
+  if (!trimmedName || (trimmedName !== oldName && tags.some(t => t.name === trimmedName))) {
+    return tags
+  }
+
+  const updated = tags.map(t => {
+    if (t.name === oldName) {
+      return { name: trimmedName, color: newColor ?? t.color }
+    }
+    return t
+  })
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
+  return updated
+}
+
 // 更新標籤顏色
 export function updateTagColor(name: string, color: string): Tag[] {
   const tags = getTags()

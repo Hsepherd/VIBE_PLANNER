@@ -67,6 +67,25 @@ export function removeGroup(name: string): Group[] {
   return groups
 }
 
+// 編輯組別
+export function editGroup(oldName: string, newName: string, newColor?: string): Group[] {
+  const groups = getGroups()
+  const trimmedName = newName.trim()
+
+  if (!trimmedName || (trimmedName !== oldName && groups.some(g => g.name === trimmedName))) {
+    return groups
+  }
+
+  const updated = groups.map(g => {
+    if (g.name === oldName) {
+      return { name: trimmedName, color: newColor ?? g.color }
+    }
+    return g
+  })
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
+  return updated
+}
+
 // 取得組別顏色
 export function getGroupColor(groupName: string): { bg: string; text: string; border: string } {
   const groups = getGroups()
