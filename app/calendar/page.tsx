@@ -1032,14 +1032,23 @@ export default function CalendarPage() {
 
                     if (taskStart && isSameDay(taskStart, day)) {
                       startMinutes = taskStart.getHours() * 60 + taskStart.getMinutes()
-                      if (taskEnd && isSameDay(taskEnd, day)) {
+                      if (taskEnd && isSameDay(taskEnd, day) && taskEnd.getTime() !== taskStart.getTime()) {
+                        // 有不同的結束時間
                         endMinutes = taskEnd.getHours() * 60 + taskEnd.getMinutes()
+                      } else if (currentTask.estimatedMinutes) {
+                        // 用預估時間計算結束
+                        endMinutes = startMinutes + currentTask.estimatedMinutes
                       } else {
                         endMinutes = startMinutes + 60
                       }
                     } else if (taskEnd && isSameDay(taskEnd, day)) {
                       endMinutes = taskEnd.getHours() * 60 + taskEnd.getMinutes()
-                      startMinutes = endMinutes - 60
+                      startMinutes = endMinutes - (currentTask.estimatedMinutes || 60)
+                    }
+
+                    // 確保至少有 15 分鐘的範圍，避免零寬度導致重疊偵測失敗
+                    if (endMinutes <= startMinutes) {
+                      endMinutes = startMinutes + (currentTask.estimatedMinutes || 60)
                     }
 
                     return { task, startMinutes, endMinutes }
@@ -1123,13 +1132,15 @@ export default function CalendarPage() {
                       let displayTime: Date
                       let endTime: Date | null = null
 
-                      // 判斷是否為時間點任務（開始=結束）
-                      const isPointTask = taskStart && taskEnd && taskStart.getTime() === taskEnd.getTime()
+                      // 判斷是否為時間點任務（開始=結束且無預估時間）
+                      const isPointTask = taskStart && taskEnd
+                        && taskStart.getTime() === taskEnd.getTime()
+                        && !displayTask.estimatedMinutes
 
                       if (taskStart && isSameDay(taskStart, day)) {
                         // 有開始時間且在這天
                         displayTime = taskStart
-                        if (taskEnd && isSameDay(taskEnd, day)) {
+                        if (taskEnd && isSameDay(taskEnd, day) && taskEnd.getTime() !== taskStart.getTime()) {
                           endTime = taskEnd
                         }
                       } else if (taskEnd && isSameDay(taskEnd, day)) {
@@ -1138,6 +1149,10 @@ export default function CalendarPage() {
                         return null
                       }
 
+                      // 推算結束時間：優先用 endTime，其次用 estimatedMinutes，最後預設 1 小時
+                      const inferredEndTime = endTime
+                        || addMinutes(displayTime, displayTask.estimatedMinutes || 60)
+
                       const startHour = displayTime.getHours()
                       const startMinute = displayTime.getMinutes()
 
@@ -1145,8 +1160,8 @@ export default function CalendarPage() {
                       const topOffset = startHour * 56 + (startMinute / 60) * 56
 
                       let height = 50
-                      if (endTime && !isPointTask) {
-                        const durationMinutes = differenceInMinutes(endTime, displayTime)
+                      if (inferredEndTime && !isPointTask) {
+                        const durationMinutes = differenceInMinutes(inferredEndTime, displayTime)
                         height = Math.max(24, (durationMinutes / 60) * 56 - 4)
                       }
 
@@ -1179,7 +1194,7 @@ export default function CalendarPage() {
                           onTouchStart={() => isTouchDevice && handleTouchStart(task, dayIdx)}
                           onTouchEnd={handleTouchEnd}
                           onTouchCancel={handleTouchEnd}
-                          title={`${displayTask.title} - ${format(displayTime, 'HH:mm')}${endTime ? ` ~ ${format(endTime, 'HH:mm')}` : ''}`}
+                          title={`${displayTask.title} - ${format(displayTime, 'HH:mm')}${inferredEndTime ? ` ~ ${format(inferredEndTime, 'HH:mm')}` : ''}`}
                         >
                           {/* 拖曳時的時間預覽 Tooltip */}
                           {isDragging && (
@@ -1217,7 +1232,7 @@ export default function CalendarPage() {
                               </p>
                               {height > 35 && (
                                 <p className="text-[10px] opacity-75 truncate">
-                                  {format(displayTime, 'HH:mm')}{endTime ? ` - ${format(endTime, 'HH:mm')}` : ''}
+                                  {format(displayTime, 'HH:mm')}{inferredEndTime ? ` - ${format(inferredEndTime, 'HH:mm')}` : ''}
                                 </p>
                               )}
                             </div>
@@ -1508,9 +1523,9 @@ export default function CalendarPage() {
           </div>
         ) : (
           <div className="flex-1 flex flex-col overflow-hidden">
-            {viewMode === 'day' && <DayView />}
-            {viewMode === 'week' && <WeekView />}
-            {viewMode === 'month' && <MonthView />}
+            {viewMode === 'day' && DayView()}
+            {viewMode === 'week' && WeekView()}
+            {viewMode === 'month' && MonthView()}
           </div>
         )}
       </div>
