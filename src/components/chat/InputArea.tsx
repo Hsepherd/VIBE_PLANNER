@@ -38,7 +38,7 @@ export default function InputArea() {
     setPendingTaskUpdate,
     setPendingTaskSearch,
     processingModes,
-    toggleProcessingMode,
+    setProcessingModes,
   } = useAppStore()
 
   const {
@@ -272,6 +272,9 @@ export default function InputArea() {
                   // S-010: 衝突資訊
                   conflictCheck: data.data.conflictCheck,
                   conflictSummary: data.data.conflictSummary,
+                  // 新任務排程資訊
+                  isNewTasks: data.data.isNewTasks || false,
+                  newTasksData: data.data.newTasksData || undefined,
                 })
               } else if (data.type === 'preference_learned') {
                 // AI 學習到了用戶的排程偏好
@@ -284,6 +287,7 @@ export default function InputArea() {
                 setPendingMeetingNotes({
                   id: crypto.randomUUID(),
                   timestamp: new Date(),
+                  rawContent: data.data.rawContent || '',
                   organized: data.data.organized,
                   markdown: data.data.markdown,
                 })
@@ -690,30 +694,57 @@ export default function InputArea() {
                 title="處理模式設定"
               >
                 <Settings2 className={`h-5 w-5 md:h-4 md:w-4 ${
-                  processingModes.length < 2 ? 'text-primary' : ''
+                  processingModes.includes('organizeMeetingNotes') ? 'text-teal-500' : ''
                 }`} />
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-52 p-3" align="start">
-              <div className="text-xs text-muted-foreground mb-3">會議記錄處理模式</div>
-              <div className="space-y-3">
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <Checkbox
-                    checked={processingModes.includes('extractTasks')}
-                    onCheckedChange={() => toggleProcessingMode('extractTasks')}
-                  />
-                  <span>📋 萃取任務</span>
+            <PopoverContent className="w-56 p-3" align="start">
+              <div className="text-xs text-muted-foreground mb-3">處理模式</div>
+              <div className="space-y-2">
+                <label
+                  className={`flex items-center gap-2 text-sm cursor-pointer p-2 rounded-md transition-colors ${
+                    processingModes.includes('organizeMeetingNotes')
+                      ? 'bg-primary/10 text-primary'
+                      : 'hover:bg-muted'
+                  }`}
+                  onClick={() => setProcessingModes(['extractTasks', 'organizeMeetingNotes'])}
+                >
+                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                    processingModes.includes('organizeMeetingNotes')
+                      ? 'border-primary'
+                      : 'border-muted-foreground'
+                  }`}>
+                    {processingModes.includes('organizeMeetingNotes') && (
+                      <div className="w-2 h-2 rounded-full bg-primary" />
+                    )}
+                  </div>
+                  <div>
+                    <div>📝 會議記錄</div>
+                    <div className="text-xs text-muted-foreground">整理會議 + 萃取任務</div>
+                  </div>
                 </label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <Checkbox
-                    checked={processingModes.includes('organizeMeetingNotes')}
-                    onCheckedChange={() => toggleProcessingMode('organizeMeetingNotes')}
-                  />
-                  <span>📝 整理會議記錄</span>
+                <label
+                  className={`flex items-center gap-2 text-sm cursor-pointer p-2 rounded-md transition-colors ${
+                    !processingModes.includes('organizeMeetingNotes')
+                      ? 'bg-primary/10 text-primary'
+                      : 'hover:bg-muted'
+                  }`}
+                  onClick={() => setProcessingModes(['extractTasks'])}
+                >
+                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                    !processingModes.includes('organizeMeetingNotes')
+                      ? 'border-primary'
+                      : 'border-muted-foreground'
+                  }`}>
+                    {!processingModes.includes('organizeMeetingNotes') && (
+                      <div className="w-2 h-2 rounded-full bg-primary" />
+                    )}
+                  </div>
+                  <div>
+                    <div>📋 僅萃取任務</div>
+                    <div className="text-xs text-muted-foreground">不產生會議記錄</div>
+                  </div>
                 </label>
-              </div>
-              <div className="text-xs text-muted-foreground mt-3 pt-2 border-t">
-                預設兩者皆啟用
               </div>
             </PopoverContent>
           </Popover>

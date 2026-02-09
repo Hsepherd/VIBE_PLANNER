@@ -166,15 +166,48 @@ generateSmartSchedule({
 - 使用者：「幫我把任務排到下週」→ 呼叫 generateSmartSchedule({ startDate: "${nextMonday.toISOString().split('T')[0]}", endDate: "${nextSunday.toISOString().split('T')[0]}" })
 - 使用者：「安排這週的工作」→ 呼叫 generateSmartSchedule({ startDate: "${thisMonday.toISOString().split('T')[0]}", endDate: "${thisSunday.toISOString().split('T')[0]}" })
 - 使用者：「幫我排未來三天的任務」→ 呼叫 generateSmartSchedule({ startDate: "${todayStr}", endDate: "${new Date(today.getTime() + 2 * 86400000).toISOString().split('T')[0]}" })
+
+## 📋 快速任務排程
+
+當使用者列出今天要做的事情（如「今天要做：寫報告、開會、回email」），
+請使用 **extractAndScheduleTasks** 函數：
+1. 從文字中萃取每個任務的標題
+2. 根據任務內容預估所需時間（分鐘）
+3. 設定合理的優先級
+4. 呼叫 extractAndScheduleTasks 自動排程
+
+範例觸發：
+- 「今天要做：寫報告(1小時)、開會(30分)、回email(20分)」
+- 「我今天的待辦：整理文件、打電話給客戶、更新週報」
+- 「等等要處理三件事：...」
+
+使用方式：
+\`\`\`
+extractAndScheduleTasks({
+  tasks: [
+    { title: "寫報告", estimatedMinutes: 60, priority: "medium" },
+    { title: "開會", estimatedMinutes: 30, priority: "high" },
+    { title: "回email", estimatedMinutes: 20, priority: "low" }
+  ],
+  scheduleDate: "${todayStr}"
+})
+\`\`\`
+
+**重要**：如果使用者有指定時間（如「1小時」「30分」），請轉換為分鐘填入 estimatedMinutes。
+如果使用者沒有指定時間，請根據任務性質合理預估。
 `
     }
 
-    // 如果用戶只選擇「整理會議記錄」模式，加入提示引導 AI 使用該功能
-    if (enableOrganizeMeetingNotes && !enableExtractTasks && enableFunctionCalling) {
+    // 如果用戶啟用「整理會議記錄」模式，加入提示引導 AI 使用該功能
+    if (enableOrganizeMeetingNotes && enableFunctionCalling) {
       systemPrompt += `\n
-## 📝 會議記錄整理模式
+## 📝 會議記錄整理功能（必須執行）
 
-使用者已選擇「只整理會議記錄」模式。當收到任何文字內容時，請使用 **organizeMeetingNotes** 函數來整理成結構化的會議記錄格式。
+使用者已啟用「會議記錄」模式。
+
+**重要規則**：當收到會議記錄、逐字稿、或討論內容時：
+1. **必須先呼叫 organizeMeetingNotes 函數**，將內容整理成結構化格式
+2. 整理完成後，再進行任務萃取
 
 使用方式：
 \`\`\`
@@ -183,7 +216,7 @@ organizeMeetingNotes({
 })
 \`\`\`
 
-**重要**：在此模式下，不需要萃取任務，只需整理會議記錄內容。
+⚠️ 不要跳過會議記錄整理直接萃取任務！使用者需要完整的會議記錄。
 `
     }
 
@@ -374,15 +407,40 @@ organizeMeetingNotes({
                   })}\n\n`))
                 }
 
+                // 如果是萃取任務並排程，發送排程預覽事件（含新任務標記）
+                if (toolCall.function.name === 'extractAndScheduleTasks' && result.success && result.data) {
+                  const scheduleData = result.data as {
+                    scheduledTasks: unknown[]
+                    unscheduledTasks: unknown[]
+                    summary: unknown
+                    isNewTasks: boolean
+                    newTasksData: unknown[]
+                  }
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                    type: 'schedule_preview',
+                    data: {
+                      scheduledTasks: scheduleData.scheduledTasks,
+                      unscheduledTasks: scheduleData.unscheduledTasks,
+                      summary: scheduleData.summary,
+                      isNewTasks: true,
+                      newTasksData: scheduleData.newTasksData,
+                    },
+                  })}\n\n`))
+                }
+
                 // 如果是會議記錄整理函數，發送會議記錄事件
                 if (toolCall.function.name === 'organizeMeetingNotes' && result.success && result.data) {
                   const meetingData = result.data as {
                     organized: unknown
                     markdown: string
                   }
+                  // 包含原始逐字稿 (rawContent)
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({
                     type: 'meeting_notes_result',
-                    data: meetingData,
+                    data: {
+                      ...meetingData,
+                      rawContent: args.rawContent || '',
+                    },
                   })}\n\n`))
                 }
               } catch (funcError) {

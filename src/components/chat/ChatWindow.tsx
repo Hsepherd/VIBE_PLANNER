@@ -7,6 +7,7 @@ import { useSupabaseTasks } from '@/lib/useSupabaseTasks'
 import { useAuth } from '@/lib/useAuth'
 import { useSupabaseProjects } from '@/lib/useSupabaseProjects'
 import { useSupabaseGroups } from '@/lib/useSupabaseGroups'
+import { useSupabaseMeetingNotes } from '@/lib/useSupabaseMeetingNotes'
 import MessageBubble from './MessageBubble'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -32,6 +33,9 @@ import { recordPositiveExample, recordNegativeExample } from '@/lib/preferences'
 import { learnFromTaskFeedback } from '@/lib/few-shot-learning'
 import { conversationLearningsApi } from '@/lib/supabase-learning'
 import { logScheduleApplied, logScheduleCancelled } from '@/lib/ai-functions/handlers/learnFromScheduleAction'
+import { Checkbox } from '@/components/ui/checkbox'
+import { createTasksFromMeetingNotes } from '@/lib/supabase-api'
+import { createClient } from '@/lib/supabase-client'
 
 // 解析 description 內容的函數
 function parseDescription(description: string) {
@@ -129,6 +133,9 @@ export default function ChatWindow() {
   // 使用 Supabase 任務 API（同步到雲端）
   const { addTask: addTaskToSupabase, updateTask: updateTaskInSupabase, tasks: supabaseTasks } = useSupabaseTasks()
 
+  // 使用 Supabase 會議記錄 API
+  const { addMeetingNote } = useSupabaseMeetingNotes()
+
   // 新增訊息到對話
   const addMessage = useAppStore((state: AppState) => state.addMessage)
 
@@ -152,9 +159,11 @@ export default function ChatWindow() {
   // 待確認排程預覽
   const pendingSchedulePreview = useAppStore((state: AppState) => state.pendingSchedulePreview)
   const clearPendingSchedulePreview = useAppStore((state: AppState) => state.clearPendingSchedulePreview)
+  const updateScheduleTaskTime = useAppStore((state: AppState) => state.updateScheduleTaskTime)
 
   // 待顯示的會議記錄
   const pendingMeetingNotes = useAppStore((state: AppState) => state.pendingMeetingNotes)
+  const setPendingMeetingNotes = useAppStore((state: AppState) => state.setPendingMeetingNotes)
   const clearPendingMeetingNotes = useAppStore((state: AppState) => state.clearPendingMeetingNotes)
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -817,46 +826,95 @@ ${group.sourceContext}
         throw new Error('未登入')
       }
 
-      // 呼叫 API 套用排程
-      const response = await fetch('/api/tasks/apply-schedule', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId,
-          scheduledTasks: pendingSchedulePreview.scheduledTasks.map(task => ({
-            taskId: task.taskId,
-            taskTitle: task.taskTitle,
-            startTime: task.startTime,
-            endTime: task.endTime,
-            estimatedMinutes: task.estimatedMinutes,
-            taskType: task.taskType,
-          })),
-        }),
+      // 取得實際使用的時間（可能已被使用者手動調整）
+      const getEffectiveTime = (task: typeof pendingSchedulePreview.scheduledTasks[0]) => ({
+        startTime: task.editedStartTime || task.startTime,
+        endTime: task.editedEndTime || task.endTime,
       })
 
-      const result = await response.json()
-
-      if (result.success) {
-        // 顯示成功訊息
-        addMessage({
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: `✅ ${result.message}`,
-          timestamp: new Date(),
+      if (pendingSchedulePreview.isNewTasks) {
+        // 新任務模式：建立任務 + 排程
+        const response = await fetch('/api/tasks/create-and-schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            tasks: pendingSchedulePreview.scheduledTasks.map(task => {
+              const times = getEffectiveTime(task)
+              const newTaskData = pendingSchedulePreview.newTasksData?.find(
+                t => t.tempId === task.taskId
+              )
+              return {
+                title: task.taskTitle,
+                description: newTaskData?.description || '',
+                priority: task.priority,
+                startTime: times.startTime,
+                endTime: times.endTime,
+                estimatedMinutes: task.estimatedMinutes,
+              }
+            }),
+          }),
         })
 
-        // 記錄用戶套用排程的行為（用於學習）
-        logScheduleApplied(userId, pendingSchedulePreview.scheduledTasks.map(task => ({
-          taskId: task.taskId,
-          taskTitle: task.taskTitle,
-          startTime: task.startTime,
-          endTime: task.endTime,
-          estimatedMinutes: task.estimatedMinutes,
-          taskType: task.taskType,
-          priority: task.priority,
-        }))).catch(err => console.error('[ChatWindow] 記錄排程套用失敗:', err))
+        const result = await response.json()
+
+        if (result.success) {
+          addMessage({
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: `✅ ${result.message}`,
+            timestamp: new Date(),
+          })
+        } else {
+          throw new Error(result.error || '建立任務失敗')
+        }
       } else {
-        throw new Error(result.error || '套用排程失敗')
+        // 現有任務模式：更新排程
+        const response = await fetch('/api/tasks/apply-schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            scheduledTasks: pendingSchedulePreview.scheduledTasks.map(task => {
+              const times = getEffectiveTime(task)
+              return {
+                taskId: task.taskId,
+                taskTitle: task.taskTitle,
+                startTime: times.startTime,
+                endTime: times.endTime,
+                estimatedMinutes: task.estimatedMinutes,
+                taskType: task.taskType,
+              }
+            }),
+          }),
+        })
+
+        const result = await response.json()
+
+        if (result.success) {
+          addMessage({
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: `✅ ${result.message}`,
+            timestamp: new Date(),
+          })
+
+          // 記錄用戶套用排程的行為（用於學習）
+          logScheduleApplied(userId, pendingSchedulePreview.scheduledTasks.map(task => {
+            const times = getEffectiveTime(task)
+            return {
+              taskId: task.taskId,
+              taskTitle: task.taskTitle,
+              startTime: times.startTime,
+              endTime: times.endTime,
+              estimatedMinutes: task.estimatedMinutes,
+              taskType: task.taskType,
+              priority: task.priority,
+            }
+          })).catch(err => console.error('[ChatWindow] 記錄排程套用失敗:', err))
+        } else {
+          throw new Error(result.error || '套用排程失敗')
+        }
       }
 
       clearPendingSchedulePreview()
@@ -871,6 +929,11 @@ ${group.sourceContext}
     } finally {
       setIsApplyingSchedule(false)
     }
+  }
+
+  // 更新排程任務時間
+  const handleUpdateScheduleTime = (taskId: string, startTime: string, endTime: string) => {
+    updateScheduleTaskTime(taskId, startTime, endTime)
   }
 
   const handleCancelSchedule = () => {
@@ -1739,6 +1802,8 @@ ${group.sourceContext}
                     isConfirming={isApplyingSchedule}
                     conflictCheck={pendingSchedulePreview.conflictCheck}
                     conflictSummary={pendingSchedulePreview.conflictSummary}
+                    editable={true}
+                    onUpdateTime={handleUpdateScheduleTime}
                   />
                 </div>
               </div>
@@ -1753,6 +1818,82 @@ ${group.sourceContext}
                       <span>📋</span> {pendingMeetingNotes.organized.title}
                     </h3>
                     <div className="flex items-center gap-2">
+                      {/* 只存會議記錄 */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          if (!pendingMeetingNotes?.organized || !pendingMeetingNotes?.markdown) {
+                            toast.error('會議記錄資料不完整')
+                            return
+                          }
+
+                          try {
+                            await addMeetingNote({
+                              title: pendingMeetingNotes.organized.title,
+                              date: new Date(pendingMeetingNotes.organized.date),
+                              participants: pendingMeetingNotes.organized.participants || [],
+                              rawContent: pendingMeetingNotes.rawContent || '',
+                              organized: pendingMeetingNotes.organized,
+                              markdown: pendingMeetingNotes.markdown,
+                            })
+                            toast.success('會議記錄已儲存')
+                            clearPendingMeetingNotes()
+                          } catch (err) {
+                            console.error('儲存會議記錄失敗:', err)
+                            toast.error('儲存失敗，請稍後再試')
+                          }
+                        }}
+                      >
+                        只存會議記錄
+                      </Button>
+                      {/* 儲存 + 建立任務 */}
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={async () => {
+                          if (!pendingMeetingNotes?.organized || !pendingMeetingNotes?.markdown) {
+                            toast.error('會議記錄資料不完整')
+                            return
+                          }
+
+                          const actionItems = pendingMeetingNotes.organized.actionItems || []
+                          const selectedIndices = pendingMeetingNotes.selectedTaskIndices ??
+                            actionItems.map((_: unknown, i: number) => i)
+                          const selectedItems = selectedIndices
+                            .map((i: number) => actionItems[i])
+                            .filter(Boolean)
+
+                          try {
+                            const savedNote = await addMeetingNote({
+                              title: pendingMeetingNotes.organized.title,
+                              date: new Date(pendingMeetingNotes.organized.date),
+                              participants: pendingMeetingNotes.organized.participants || [],
+                              rawContent: pendingMeetingNotes.rawContent || '',
+                              organized: pendingMeetingNotes.organized,
+                              markdown: pendingMeetingNotes.markdown,
+                            })
+
+                            if (selectedItems.length > 0 && savedNote?.id) {
+                              const supabase = createClient()
+                              const { data: { user } } = await supabase.auth.getUser()
+                              if (user) {
+                                await createTasksFromMeetingNotes(savedNote.id, selectedItems, user.id)
+                              }
+                            }
+
+                            toast.success(`已儲存，建立 ${selectedItems.length} 個任務`)
+                            clearPendingMeetingNotes()
+                          } catch (err) {
+                            console.error('儲存會議記錄失敗:', err)
+                            toast.error('儲存失敗，請稍後再試')
+                          }
+                        }}
+                        disabled={!(pendingMeetingNotes.selectedTaskIndices?.length ?? pendingMeetingNotes.organized.actionItems?.length)}
+                      >
+                        <Check className="h-4 w-4 mr-1" />
+                        儲存 + 建立 {pendingMeetingNotes.selectedTaskIndices?.length ?? pendingMeetingNotes.organized.actionItems?.length ?? 0} 個任務
+                      </Button>
                       <Button
                         variant="outline"
                         size="sm"
@@ -1762,7 +1903,7 @@ ${group.sourceContext}
                         }}
                       >
                         <Copy className="h-4 w-4 mr-1" />
-                        複製 Markdown
+                        複製
                       </Button>
                       <Button
                         variant="ghost"
@@ -1812,23 +1953,52 @@ ${group.sourceContext}
                     </div>
                   )}
 
-                  {/* 待辦任務 */}
+                  {/* 待辦任務 - 可勾選 */}
                   {pendingMeetingNotes.organized.actionItems?.length > 0 && (
                     <div className="mb-4">
-                      <h4 className="text-sm font-medium mb-2 text-amber-700 dark:text-amber-400">📝 待辦任務</h4>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-medium text-amber-700 dark:text-amber-400">📝 待辦任務</h4>
+                        <button
+                          className="text-xs text-muted-foreground hover:text-foreground"
+                          onClick={() => {
+                            const allIndices = pendingMeetingNotes.organized.actionItems.map((_: unknown, i: number) => i)
+                            const currentSelected = pendingMeetingNotes.selectedTaskIndices ?? allIndices
+                            const newSelected = currentSelected.length === allIndices.length ? [] : allIndices
+                            setPendingMeetingNotes({ ...pendingMeetingNotes, selectedTaskIndices: newSelected })
+                          }}
+                        >
+                          {(pendingMeetingNotes.selectedTaskIndices?.length ?? pendingMeetingNotes.organized.actionItems.length) === pendingMeetingNotes.organized.actionItems.length
+                            ? '取消全選' : '全選'}
+                        </button>
+                      </div>
                       <ul className="text-sm space-y-1">
-                        {pendingMeetingNotes.organized.actionItems.map((item: { task: string; assignee?: string; dueDate?: string }, i: number) => (
-                          <li key={i} className="flex items-center gap-2">
-                            <Square className="h-4 w-4 text-muted-foreground shrink-0" />
-                            <span>{item.task}</span>
-                            {item.assignee && (
-                              <Badge variant="outline" className="text-xs py-0">@{item.assignee}</Badge>
-                            )}
-                            {item.dueDate && (
-                              <span className="text-xs text-amber-600">{item.dueDate}</span>
-                            )}
-                          </li>
-                        ))}
+                        {pendingMeetingNotes.organized.actionItems.map((item: { task: string; assignee?: string; dueDate?: string }, i: number) => {
+                          const isSelected = pendingMeetingNotes.selectedTaskIndices?.includes(i) ?? true
+                          return (
+                            <li key={i} className="flex items-center gap-2">
+                              <Checkbox
+                                checked={isSelected}
+                                onCheckedChange={(checked) => {
+                                  const current = pendingMeetingNotes.selectedTaskIndices ??
+                                    pendingMeetingNotes.organized.actionItems.map((_: unknown, idx: number) => idx)
+                                  const newSelected = checked
+                                    ? [...current, i]
+                                    : current.filter((idx: number) => idx !== i)
+                                  setPendingMeetingNotes({ ...pendingMeetingNotes, selectedTaskIndices: newSelected })
+                                }}
+                              />
+                              <span className={!isSelected ? 'text-muted-foreground line-through' : ''}>
+                                {item.task}
+                              </span>
+                              {item.assignee && (
+                                <Badge variant="outline" className="text-xs py-0">@{item.assignee}</Badge>
+                              )}
+                              {item.dueDate && (
+                                <span className="text-xs text-amber-600">{item.dueDate}</span>
+                              )}
+                            </li>
+                          )
+                        })}
                       </ul>
                     </div>
                   )}

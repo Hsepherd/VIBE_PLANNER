@@ -244,7 +244,40 @@ export const AI_FUNCTIONS: ChatCompletionTool[] = [
     },
   },
 
-  // 8. 整理會議記錄
+  // 8. 從自然語言萃取任務並排程
+  {
+    type: 'function',
+    function: {
+      name: 'extractAndScheduleTasks',
+      description: '從使用者的自然語言描述中萃取任務並自動排程到具體時間。當使用者說「今天要做...」「我的待辦是...」等列出任務清單時使用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          tasks: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                title: { type: 'string', description: '任務標題' },
+                estimatedMinutes: { type: 'number', description: '預估時間（分鐘），如使用者未指定則由 AI 估算' },
+                priority: { type: 'string', enum: ['low', 'medium', 'high', 'urgent'], description: '優先級' },
+                description: { type: 'string', description: '任務描述（可選）' },
+              },
+              required: ['title', 'estimatedMinutes'],
+            },
+            description: '從使用者描述中萃取的任務陣列',
+          },
+          scheduleDate: { type: 'string', description: '排程日期，YYYY-MM-DD，預設今天' },
+          workStart: { type: 'string', description: '工作開始時間 HH:mm，預設 09:00' },
+          workEnd: { type: 'string', description: '工作結束時間 HH:mm，預設 18:00' },
+        },
+        required: ['tasks'],
+        additionalProperties: false,
+      },
+    },
+  },
+
+  // 9. 整理會議記錄
   {
     type: 'function',
     function: {
@@ -278,6 +311,7 @@ export type AIFunctionName =
   | 'createSchedulePreview'
   | 'updateTaskEstimate'
   | 'generateSmartSchedule'
+  | 'extractAndScheduleTasks'
   | 'organizeMeetingNotes'
 
 // 檢查是否為會議記錄相關對話
@@ -325,6 +359,13 @@ export function isSchedulingRelated(message: string): boolean {
     '排未來', '排接下來',
     '今天的任務', '明天的任務', '這週的任務', '下週的任務',
     '任務排到', '工作排到',
+
+    // 列出待辦事項的自然語言表達
+    '今天要做', '今天的待辦', '我今天要', '我要做',
+    '今天的事', '今天要處理', '待辦清單',
+    '幫我安排今天', '今天的工作',
+    '接下來要做', '等等要做', '要完成的事',
+    '今天計畫', '今天規劃',
   ]
 
   const lowerMessage = message.toLowerCase()

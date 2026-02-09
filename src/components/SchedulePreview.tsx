@@ -69,6 +69,9 @@ interface SchedulePreviewProps {
   // S-010: 衝突資訊
   conflictCheck?: ConflictCheckResult
   conflictSummary?: string
+  // 可編輯時間
+  editable?: boolean
+  onUpdateTime?: (taskId: string, startTime: string, endTime: string) => void
 }
 
 // 優先級顏色
@@ -142,6 +145,30 @@ function groupByDate(tasks: ScheduledTaskPreview[]): Record<string, ScheduledTas
   return grouped
 }
 
+// 從 ISO 時間字串提取 HH:mm
+function extractHHMM(isoString: string): string {
+  const date = new Date(isoString)
+  return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+}
+
+// 根據開始時間和預估分鐘數計算結束時間的 ISO 字串
+function calculateEndTimeISO(startTimeISO: string, newStartHHMM: string, estimatedMinutes: number): string {
+  const original = new Date(startTimeISO)
+  const [h, m] = newStartHHMM.split(':').map(Number)
+  const newStart = new Date(original)
+  newStart.setHours(h, m, 0, 0)
+  const newEnd = new Date(newStart.getTime() + estimatedMinutes * 60 * 1000)
+  return newEnd.toISOString()
+}
+
+// 將 HH:mm 替換到 ISO 字串中
+function replaceTimeInISO(isoString: string, hhmm: string): string {
+  const date = new Date(isoString)
+  const [h, m] = hhmm.split(':').map(Number)
+  date.setHours(h, m, 0, 0)
+  return date.toISOString()
+}
+
 export function SchedulePreview({
   scheduledTasks,
   unscheduledTasks,
@@ -151,7 +178,10 @@ export function SchedulePreview({
   isConfirming = false,
   conflictCheck,
   conflictSummary,
+  editable = false,
+  onUpdateTime,
 }: SchedulePreviewProps) {
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
   const groupedTasks = groupByDate(scheduledTasks)
   const sortedDates = Object.keys(groupedTasks).sort()
 
@@ -166,6 +196,15 @@ export function SchedulePreview({
       existing.push(conflict)
       taskConflicts.set(conflict.taskId, existing)
     }
+  }
+
+  // 處理時間變更
+  const handleTimeChange = (taskId: string, newStartHHMM: string, task: ScheduledTaskPreview) => {
+    if (!onUpdateTime) return
+    const newStartISO = replaceTimeInISO(task.startTime, newStartHHMM)
+    const newEndISO = calculateEndTimeISO(task.startTime, newStartHHMM, task.estimatedMinutes)
+    onUpdateTime(taskId, newStartISO, newEndISO)
+    setEditingTaskId(null)
   }
 
   return (
@@ -228,10 +267,42 @@ export function SchedulePreview({
                     )}
                   >
                     {/* 時間 */}
-                    <div className="flex-shrink-0 text-xs text-muted-foreground w-20">
-                      <div className="font-medium">{formatTime(task.startTime)}</div>
-                      <div className="text-gray-400">~ {formatTime(task.endTime)}</div>
-                      <div className="text-gray-400">{task.estimatedMinutes} 分鐘</div>
+                    <div className="flex-shrink-0 text-xs text-muted-foreground w-24">
+                      {editable && editingTaskId === task.taskId ? (
+                        <div>
+                          <input
+                            type="time"
+                            defaultValue={extractHHMM(task.startTime)}
+                            className="w-full text-xs border rounded px-1 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                            onBlur={(e) => handleTimeChange(task.taskId, e.target.value, task)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                handleTimeChange(task.taskId, (e.target as HTMLInputElement).value, task)
+                              }
+                              if (e.key === 'Escape') {
+                                setEditingTaskId(null)
+                              }
+                            }}
+                            autoFocus
+                          />
+                          <div className="text-gray-400 mt-0.5">{task.estimatedMinutes} 分鐘</div>
+                        </div>
+                      ) : (
+                        <div
+                          className={cn(
+                            editable && "cursor-pointer hover:bg-blue-100 rounded px-1 -mx-1 transition-colors",
+                          )}
+                          onClick={() => editable && setEditingTaskId(task.taskId)}
+                          title={editable ? '點擊調整時間' : undefined}
+                        >
+                          <div className="font-medium">{formatTime(task.startTime)}</div>
+                          <div className="text-gray-400">~ {formatTime(task.endTime)}</div>
+                          <div className="text-gray-400">{task.estimatedMinutes} 分鐘</div>
+                          {editable && (
+                            <div className="text-blue-400 text-[10px] mt-0.5">可調整</div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {/* 任務內容 */}

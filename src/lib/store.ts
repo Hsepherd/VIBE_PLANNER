@@ -155,6 +155,7 @@ export interface AppState {
   pendingSchedulePreview: PendingSchedulePreview | null
   setPendingSchedulePreview: (preview: PendingSchedulePreview | null) => void
   clearPendingSchedulePreview: () => void
+  updateScheduleTaskTime: (taskId: string, startTime: string, endTime: string) => void
 
   // 待顯示的會議記錄
   pendingMeetingNotes: PendingMeetingNotes | null
@@ -283,6 +284,8 @@ export interface ScheduledTaskItem {
   confidence: 'high' | 'medium' | 'low'
   slotDate: string
   reasoning: string
+  editedStartTime?: string   // 使用者手動調整後的開始時間
+  editedEndTime?: string     // 使用者手動調整後的結束時間
 }
 
 // 未能排程的任務
@@ -330,6 +333,15 @@ export interface PendingSchedulePreview {
   // S-010: 衝突資訊
   conflictCheck?: ConflictCheckResult
   conflictSummary?: string
+  // 新任務排程（從對話中萃取）
+  isNewTasks?: boolean
+  newTasksData?: Array<{
+    tempId: string
+    title: string
+    description?: string
+    priority: 'low' | 'medium' | 'high' | 'urgent'
+    estimatedMinutes: number
+  }>
 }
 
 // 整理後的會議記錄
@@ -347,8 +359,10 @@ export interface OrganizedMeetingNotes {
 export interface PendingMeetingNotes {
   id: string
   timestamp: Date
+  rawContent: string // 原始會議逐字稿
   organized: OrganizedMeetingNotes
   markdown: string
+  selectedTaskIndices?: number[]  // 勾選要建立的任務索引
 }
 
 // 生成 UUID
@@ -595,7 +609,8 @@ export const useAppStore = create<AppState>()(
       pendingTasks: [],
       setPendingTasks: (tasks) => set({ pendingTasks: tasks }),
       // 清除所有待確認任務和已處理任務歷史（用於切換/建立對話時）
-      clearPendingTasks: () => set({ pendingTasks: [], pendingTaskGroups: [], processedTaskGroups: [], pendingCategorizations: null }),
+      // 注意：不清空 pendingTaskGroups，保留待確認任務讓用戶可以在登出後繼續處理
+      clearPendingTasks: () => set({ pendingTasks: [], processedTaskGroups: [], pendingCategorizations: null }),
 
       // 已處理任務歷史
       processedTaskGroups: [],
@@ -670,6 +685,19 @@ export const useAppStore = create<AppState>()(
       pendingSchedulePreview: null,
       setPendingSchedulePreview: (preview) => set({ pendingSchedulePreview: preview }),
       clearPendingSchedulePreview: () => set({ pendingSchedulePreview: null }),
+      updateScheduleTaskTime: (taskId, startTime, endTime) => set((state) => {
+        if (!state.pendingSchedulePreview) return state
+        return {
+          pendingSchedulePreview: {
+            ...state.pendingSchedulePreview,
+            scheduledTasks: state.pendingSchedulePreview.scheduledTasks.map(task =>
+              task.taskId === taskId
+                ? { ...task, startTime, endTime, editedStartTime: startTime, editedEndTime: endTime }
+                : task
+            ),
+          },
+        }
+      }),
 
       // 待顯示的會議記錄
       pendingMeetingNotes: null,
@@ -700,6 +728,7 @@ export const useAppStore = create<AppState>()(
         apiUsage: state.apiUsage,
         processedTaskGroups: state.processedTaskGroups,
         pendingTaskGroups: state.pendingTaskGroups,
+        processingModes: state.processingModes, // 持久化處理模式設定
       }),
     }
   )

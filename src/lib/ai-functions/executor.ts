@@ -10,6 +10,7 @@ import { createSchedulePreview } from './handlers/schedulePreview'
 import { updateTaskEstimate } from './handlers/updateTaskEstimate'
 import { generateSmartSchedule } from './handlers/scheduleAlgorithm'
 import { organizeMeetingNotes } from './handlers/organizeMeetingNotes'
+import { extractAndScheduleTasks } from './handlers/extractAndScheduleTasks'
 import type { AIFunctionName } from './definitions'
 
 // Function 執行上下文
@@ -101,6 +102,20 @@ export async function executeFunctionCall(
           workEnd?: string
           respectDeadlines?: boolean
           maxTasksPerDay?: number
+        })
+        break
+
+      case 'extractAndScheduleTasks':
+        result = await extractAndScheduleTasks(context.userId, args as {
+          tasks: Array<{
+            title: string
+            estimatedMinutes: number
+            priority?: 'low' | 'medium' | 'high' | 'urgent'
+            description?: string
+          }>
+          scheduleDate?: string
+          workStart?: string
+          workEnd?: string
         })
         break
 
