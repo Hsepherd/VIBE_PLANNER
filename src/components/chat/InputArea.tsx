@@ -304,43 +304,77 @@ export default function InputArea() {
                   console.log('[InputArea] 任務列表:', parsed.tasks.map(t => t.title))
                 }
 
-                // 如果有任務萃取，顯示完整的 Markdown 回應（包含表格）
-                // 而不是只顯示 JSON 內的 message 欄位
+                // 從 AI 回覆中提取用戶可見的訊息內容
+                // 目標：移除所有 raw JSON，只保留 Markdown 文字
                 let messageContent = fullContent
 
-                // 處理 JSON 回應：可能是 ```json...``` 格式，也可能是純 JSON
-                // 優先處理 chat 類型（偏好學習等場景會返回這種格式）
-                if (parsed.type === 'chat' && parsed.message) {
+                // 輔助函數：從 fullContent 中移除所有 JSON code blocks
+                const stripJsonBlocks = (text: string): string => {
+                  // 移除 ```json...``` 區塊
+                  let cleaned = text.replace(/```json[\s\S]*?```/g, '').trim()
+                  // 移除獨立的 ```...``` 中的 JSON 區塊
+                  cleaned = cleaned.replace(/```\s*\{[\s\S]*?\}\s*```/g, '').trim()
+                  return cleaned
+                }
+
+                // 輔助函數：根據 parsed.type 生成友善的 fallback 訊息
+                const getFallbackMessage = (): string => {
+                  if (parsed.type === 'tasks_extracted' && parsed.tasks?.length) {
+                    return `📋 我從內容中萃取了 ${parsed.tasks.length} 個任務，請確認是否要加入：`
+                  } else if (parsed.type === 'task_search' && parsed.matched_tasks?.length) {
+                    return `🔍 找到 ${parsed.matched_tasks.length} 個匹配的任務，請選擇要更新哪一個：`
+                  } else if (parsed.type === 'task_categorization') {
+                    return `📂 以下是任務分類建議：`
+                  } else if (parsed.type === 'task_update') {
+                    return `✏️ 準備更新任務，請確認：`
+                  }
+                  return parsed.message || '處理完成'
+                }
+
+                // 1. 如果 parsed 成功且有 message 欄位，優先使用
+                if (parsed.message && parsed.message.length > 20) {
                   messageContent = parsed.message
-                } else if (parsed.type === 'tasks_extracted' || parsed.type === 'task_search' || parsed.type === 'task_categorization' || parsed.type === 'task_update') {
+                } else if (parsed.type === 'chat' && parsed.message) {
+                  messageContent = parsed.message
+                } else if (parsed.type && parsed.type !== 'chat') {
+                  // 2. 結構化回應（tasks_extracted, task_search 等），嘗試清理 JSON
                   if (fullContent.includes('```json')) {
-                    // 有 code block 的情況：保留 JSON 區塊前的 Markdown 內容
-                    const jsonStart = fullContent.indexOf('```json')
-                    if (jsonStart > 50) {
-                      messageContent = fullContent.slice(0, jsonStart).trim()
-                    } else if (parsed.message && parsed.message.length > 50) {
-                      messageContent = parsed.message
+                    const cleaned = stripJsonBlocks(fullContent)
+                    if (cleaned.length > 20) {
+                      messageContent = cleaned
+                    } else {
+                      messageContent = getFallbackMessage()
                     }
                   } else {
-                    // 純 JSON 回應（沒有 code block）：使用 message 欄位
-                    // 如果 message 太短或不存在，生成友善的提示訊息
-                    if (parsed.message && parsed.message.length > 20) {
-                      messageContent = parsed.message
-                    } else if (parsed.type === 'tasks_extracted' && parsed.tasks && parsed.tasks.length > 0) {
-                      messageContent = `📋 我從內容中萃取了 ${parsed.tasks.length} 個任務，請確認是否要加入：`
-                    } else if (parsed.type === 'task_search' && parsed.matched_tasks && parsed.matched_tasks.length > 0) {
-                      messageContent = `🔍 找到 ${parsed.matched_tasks.length} 個匹配的任務，請選擇要更新哪一個：`
-                    } else if (parsed.type === 'task_categorization') {
-                      messageContent = `📂 以下是任務分類建議：`
-                    } else if (parsed.type === 'task_update') {
-                      messageContent = `✏️ 準備更新任務，請確認：`
-                    } else {
-                      messageContent = parsed.message || '處理完成'
-                    }
+                    messageContent = getFallbackMessage()
                   }
-                } else if (fullContent.trim().startsWith('{') && parsed.message) {
-                  // 處理其他類型的純 JSON 回應（有 message 欄位的情況）
-                  messageContent = parsed.message
+                } else if (fullContent.trim().startsWith('{') || fullContent.trim().startsWith('[')) {
+                  // 3. 純 JSON 回應但沒有被 parseAIResponse 成功解析
+                  try {
+                    const jsonObj = JSON.parse(fullContent.trim())
+                    messageContent = jsonObj.message || getFallbackMessage()
+                  } catch {
+                    // 不是有效 JSON，保留原文
+                  }
+                } else if (fullContent.includes('```json')) {
+                  // 4. 混合內容含 JSON code block 但 parsed.type 為空
+                  const cleaned = stripJsonBlocks(fullContent)
+                  if (cleaned.length > 10) {
+                    messageContent = cleaned
+                  }
+                }
+
+                // 5. 最後防線：如果 messageContent 仍含大段 JSON 結構，移除之
+                if (messageContent.includes('"type"') && messageContent.includes('"message"')) {
+                  try {
+                    // 嘗試從中提取 JSON 並取 message
+                    const jsonMatch = messageContent.match(/\{[\s\S]*"message"\s*:\s*"([^"]+)"[\s\S]*\}/)
+                    if (jsonMatch && jsonMatch[1] && jsonMatch[1].length > 20) {
+                      messageContent = jsonMatch[1]
+                    }
+                  } catch {
+                    // 忽略
+                  }
                 }
 
                 console.log('[InputArea] 最終訊息長度:', messageContent.length)
@@ -754,7 +788,7 @@ export default function InputArea() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="輸入訊息或貼上會議記錄..."
+            placeholder={isLoading ? "AI 正在回覆中，請稍候..." : "輸入訊息或貼上會議記錄..."}
             className="min-h-[44px] max-h-[150px] md:max-h-[200px] resize-none text-base"
             disabled={isLoading || isSummarizing}
           />

@@ -110,7 +110,7 @@ export async function extractAndScheduleTasks(
 ): Promise<ExtractAndScheduleResult> {
   const {
     tasks: inputTasks,
-    scheduleDate = new Date().toISOString().split('T')[0],
+    scheduleDate = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` })(),
     workStart = '09:00',
     workEnd = '18:00',
   } = args

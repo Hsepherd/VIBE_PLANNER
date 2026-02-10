@@ -7,6 +7,14 @@
 import { getUnscheduledTasks } from './getUnscheduledTasks'
 import { getAvailableSlots } from './getAvailableSlots'
 import { estimateMultipleTasksTimeOptimized, TaskTimeEstimate } from './estimateTaskTime'
+
+// 使用本地時區格式化日期為 YYYY-MM-DD（避免 UTC 偏移）
+function toLocalDateString(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 import {
   getSchedulingPreferences,
   calculateSlotScore,
@@ -132,9 +140,23 @@ function allocateFromSlot(
   taskMinutes: number,
   bufferMinutes: number
 ): { startTime: string; endTime: string } {
-  const [startHour, startMin] = slot.start.split(':').map(Number)
-  const startDate = new Date(`${slot.date}T${slot.start}:00`)
+  // 驗證 slot.date 格式
+  if (!slot.date || !/^\d{4}-\d{2}-\d{2}$/.test(slot.date)) {
+    console.warn('[Schedule Algorithm] allocateFromSlot: 無效的 slot.date:', slot.date)
+    slot.date = toLocalDateString(new Date())
+  }
+
+  // 正規化 slot.start 為 HH:MM 格式（去除可能的秒數）
+  const normalizedStart = slot.start.length > 5 ? slot.start.substring(0, 5) : slot.start
+
+  const startDate = new Date(`${slot.date}T${normalizedStart}:00`)
   const endDate = new Date(startDate.getTime() + taskMinutes * 60 * 1000)
+
+  // 驗證日期有效性
+  if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+    console.warn('[Schedule Algorithm] allocateFromSlot: 無效日期', slot.date, slot.start)
+    return { startTime: '', endTime: '' }
+  }
 
   const formatTime = (date: Date) => {
     const h = date.getHours().toString().padStart(2, '0')
@@ -190,22 +212,28 @@ export async function generateSmartSchedule(
     console.log('[Schedule Algorithm] 使用預設排程設定')
   }
 
+  // 正規化時間為 HH:MM 格式（偏好設定可能帶秒數 HH:MM:SS）
+  const normalizeTime = (t: string) => t.length > 5 ? t.substring(0, 5) : t
+
   // 優先使用偏好設定，否則使用 options 或預設值
   const {
-    startDate = new Date().toISOString().split('T')[0],
-    endDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    workStart = preferences?.workStartTime || '09:00',
-    workEnd = preferences?.workEndTime || '18:00',
+    startDate = toLocalDateString(new Date()),
+    endDate = toLocalDateString(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)),
+    workStart: rawWorkStart = preferences?.workStartTime || '09:00',
+    workEnd: rawWorkEnd = preferences?.workEndTime || '18:00',
     priorityOrder = ['urgent', 'high', 'medium', 'low'],
     respectDeadlines = true,
     maxTasksPerDay = preferences?.maxTasksPerDay || 8,
     bufferMinutes = preferences?.minTaskGapMinutes || 15,
   } = options
 
+  const workStart = normalizeTime(rawWorkStart)
+  const workEnd = normalizeTime(rawWorkEnd)
+
   // 從偏好中取得額外設定
   const maxDailyHours = preferences?.maxDailyHours || 6
-  const lunchStart = preferences?.lunchStartTime || '12:00'
-  const lunchEnd = preferences?.lunchEndTime || '13:00'
+  const lunchStart = normalizeTime(preferences?.lunchStartTime || '12:00')
+  const lunchEnd = normalizeTime(preferences?.lunchEndTime || '13:00')
 
   console.log('[Schedule Algorithm] 開始排程', {
     startDate,
@@ -471,12 +499,19 @@ export async function generateSmartSchedule(
   console.log(`[Schedule Algorithm] 排程完成: ${scheduledTasks.length} 成功, ${failedTasks.length} 失敗`)
 
   // S-010: 執行衝突檢查（驗證排程結果與行事曆事件）
-  const scheduledTasksForCheck = scheduledTasks.map(t => ({
-    taskId: t.taskId,
-    taskTitle: t.taskTitle,
-    startTime: t.startTime,
-    endTime: t.endTime,
-  }))
+  // 過濾掉無效時間的任務，避免 Invalid time value
+  const scheduledTasksForCheck = scheduledTasks
+    .filter(t => {
+      const valid = t.startTime && t.endTime && !isNaN(new Date(t.startTime).getTime()) && !isNaN(new Date(t.endTime).getTime())
+      if (!valid) console.warn('[Schedule Algorithm] 跳過無效時間任務:', t.taskTitle)
+      return valid
+    })
+    .map(t => ({
+      taskId: t.taskId,
+      taskTitle: t.taskTitle,
+      startTime: t.startTime,
+      endTime: t.endTime,
+    }))
 
   const conflictCheck = checkScheduleConflicts(
     scheduledTasksForCheck,

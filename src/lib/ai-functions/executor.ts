@@ -26,6 +26,48 @@ export interface FunctionResult {
 }
 
 /**
+ * 修正 AI 回傳的日期年份
+ * GPT 偶爾會輸出 2024 或其他過去的年份，這裡強制修正為當前年份
+ */
+function fixDateYear(args: Record<string, unknown>): Record<string, unknown> {
+  const currentYear = new Date().getFullYear()
+  const dateFields = ['startDate', 'endDate', 'scheduleDate', 'dueBefore']
+
+  for (const field of dateFields) {
+    if (typeof args[field] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args[field] as string)) {
+      const dateStr = args[field] as string
+      const year = parseInt(dateStr.substring(0, 4))
+      if (year < currentYear) {
+        const corrected = `${currentYear}${dateStr.substring(4)}`
+        console.warn(`[AI Function] 修正日期年份: ${dateStr} → ${corrected}`)
+        args[field] = corrected
+      }
+    }
+  }
+
+  // 遞迴處理巢狀的 tasks 陣列中的日期
+  if (Array.isArray(args.tasks)) {
+    for (const task of args.tasks as Record<string, unknown>[]) {
+      if (task && typeof task === 'object') {
+        for (const field of ['dueDate', 'startDate', 'endDate']) {
+          if (typeof task[field] === 'string' && /^\d{4}-\d{2}-\d{2}/.test(task[field] as string)) {
+            const dateStr = task[field] as string
+            const year = parseInt(dateStr.substring(0, 4))
+            if (year < currentYear) {
+              const corrected = `${currentYear}${dateStr.substring(4)}`
+              console.warn(`[AI Function] 修正任務日期年份: ${dateStr} → ${corrected}`)
+              task[field] = corrected
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return args
+}
+
+/**
  * 執行 AI 呼叫的 function
  */
 export async function executeFunctionCall(
@@ -33,6 +75,9 @@ export async function executeFunctionCall(
   args: Record<string, unknown>,
   context: FunctionContext
 ): Promise<FunctionResult> {
+  // 自動修正 AI 回傳的日期年份
+  args = fixDateYear(args)
+
   console.log(`[AI Function] 執行 ${functionName}`, { args, userId: context.userId })
 
   try {

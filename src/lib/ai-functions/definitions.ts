@@ -316,58 +316,102 @@ export type AIFunctionName =
 
 // 檢查是否為會議記錄相關對話
 export function isMeetingNotesRelated(message: string): boolean {
-  const meetingKeywords = [
-    // 直接請求
+  // 強觸發：單一關鍵字就觸發（明確的會議整理請求）
+  const strongKeywords = [
     '整理會議', '會議記錄', '會議紀錄', '會議整理',
     '整理這段', '整理筆記', '整理逐字稿',
     '逐字稿', '開會紀錄', '開會內容',
     'meeting notes', 'meeting transcript',
-    // 會議內容特徵（長文本常見詞）
+  ]
+
+  // 弱觸發：需要至少 2 個才觸發（一般性會議詞彙）
+  const weakKeywords = [
     '討論', '決議', '待辦', '行動項目',
     '與會', '出席', '會議時間', '會議地點',
   ]
 
   const lowerMessage = message.toLowerCase()
 
-  // 檢查關鍵詞
-  const hasKeyword = meetingKeywords.some(keyword => lowerMessage.includes(keyword))
+  // 強關鍵字直接觸發
+  if (strongKeywords.some(keyword => lowerMessage.includes(keyword))) {
+    return true
+  }
 
-  // 檢查是否為長文本（可能是會議逐字稿）
-  const isLongText = message.length > 500
+  // 弱關鍵字需要至少 2 個
+  const weakCount = weakKeywords.filter(keyword => lowerMessage.includes(keyword)).length
+  if (weakCount >= 2) {
+    return true
+  }
 
-  return hasKeyword || isLongText
+  // 長文本（>500 字）+ 至少 1 個弱關鍵字
+  if (message.length > 500 && weakCount >= 1) {
+    return true
+  }
+
+  return false
 }
 
-// 檢查是否為排程相關對話
+// 檢查是否為排程相關對話（評分制，避免誤觸）
 export function isSchedulingRelated(message: string): boolean {
-  const schedulingKeywords = [
-    // 排程相關
-    '排程', '排行程', '排今天', '排這週', '排下週', '排本週',
-    '安排', '規劃', '計畫', '計劃',
-    '時間表', '行事曆', '日程',
-    '什麼時候做', '什麼時間',
-    '幫我排', '幫我安排',
-    '空檔', '可用時間',
-    '預估時間', '要多久',
-    'schedule', 'plan', 'calendar',
+  const lowerMessage = message.toLowerCase()
 
-    // 自然語言日期表達（S-011）
+  // 強觸發：明確的排程意圖，單一關鍵字就觸發（score = 3）
+  const strongKeywords = [
+    '排程', '排行程', '排今天', '排這週', '排下週', '排本週',
+    '幫我排', '幫我安排',
     '排到今天', '排到明天', '排到後天',
     '排到這週', '排到下週', '排到本週', '排到下周',
     '排到週末', '排到下週末',
     '排到這個月', '排到下個月',
     '排未來', '排接下來',
-    '今天的任務', '明天的任務', '這週的任務', '下週的任務',
     '任務排到', '工作排到',
-
-    // 列出待辦事項的自然語言表達
-    '今天要做', '今天的待辦', '我今天要', '我要做',
-    '今天的事', '今天要處理', '待辦清單',
-    '幫我安排今天', '今天的工作',
-    '接下來要做', '等等要做', '要完成的事',
-    '今天計畫', '今天規劃',
+    '幫我安排今天',
+    '今天的任務', '明天的任務', '這週的任務', '下週的任務',
+    '今天要做', '今天的待辦', '今天要處理',
+    '今天的工作', '今天計畫', '今天規劃',
+    'schedule my', 'plan my day',
   ]
 
-  const lowerMessage = message.toLowerCase()
-  return schedulingKeywords.some(keyword => lowerMessage.includes(keyword))
+  // 中觸發：需要搭配其他關鍵字（score = 2）
+  const mediumKeywords = [
+    '時間表', '行事曆', '日程',
+    '空檔', '可用時間',
+    '預估時間', '要多久',
+    '待辦清單',
+    '接下來要做', '等等要做', '要完成的事',
+  ]
+
+  // 弱觸發：日常用語，單獨出現不應觸發（score = 1）
+  const weakKeywords = [
+    '安排', '規劃', '計畫', '計劃',
+    '什麼時候做', '什麼時間',
+    '我今天要', '我要做',
+    '今天的事',
+    'schedule', 'plan', 'calendar',
+  ]
+
+  let score = 0
+
+  // 計算分數
+  for (const keyword of strongKeywords) {
+    if (lowerMessage.includes(keyword)) {
+      score += 3
+    }
+  }
+  for (const keyword of mediumKeywords) {
+    if (lowerMessage.includes(keyword)) {
+      score += 2
+    }
+  }
+  for (const keyword of weakKeywords) {
+    if (lowerMessage.includes(keyword)) {
+      score += 1
+    }
+  }
+
+  // 閾值：需要至少 3 分才觸發
+  // 強關鍵字（3分）→ 直接觸發
+  // 中關鍵字（2分）+ 弱關鍵字（1分）→ 觸發
+  // 單一弱關鍵字（1分）→ 不觸發
+  return score >= 3
 }

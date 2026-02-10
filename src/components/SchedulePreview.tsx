@@ -105,7 +105,8 @@ function formatTime(isoString: string): string {
 
 // 格式化日期
 function formatDate(dateString: string): string {
-  const date = new Date(dateString)
+  // 日期字串 'YYYY-MM-DD' 會被解析為 UTC，加上 T00:00:00 強制本地時區
+  const date = new Date(dateString.includes('T') ? dateString : `${dateString}T00:00:00`)
   const today = new Date()
   const tomorrow = new Date(today)
   tomorrow.setDate(tomorrow.getDate() + 1)

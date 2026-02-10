@@ -36,8 +36,11 @@ export async function getAvailableSlots(
   userId: string,
   args: GetAvailableSlotsArgs
 ): Promise<AvailableSlotsResult> {
-  const workStart = args.workStart || '09:00'
-  const workEnd = args.workEnd || '18:00'
+  // 正規化為 HH:MM 格式（偏好設定可能帶秒數 HH:MM:SS）
+  const rawWorkStart = args.workStart || '09:00'
+  const rawWorkEnd = args.workEnd || '18:00'
+  const workStart = rawWorkStart.length > 5 ? rawWorkStart.substring(0, 5) : rawWorkStart
+  const workEnd = rawWorkEnd.length > 5 ? rawWorkEnd.substring(0, 5) : rawWorkEnd
 
   const startDate = new Date(args.startDate)
   const endDate = args.endDate ? new Date(args.endDate) : new Date(args.startDate)
@@ -109,17 +112,34 @@ export async function getAvailableSlots(
         .eq('user_id', userId)
     } catch (refreshError) {
       console.error('[AI Function] Token refresh failed:', refreshError)
-      result.warning = 'Token 已過期，請重新連接 Google Calendar'
+      result.warning = 'Google Calendar 授權已過期，目前使用預設工作時段排程。請至設定頁面重新連接 Google Calendar。'
       result.googleConnected = false
 
-      // 回傳全工作時段
+      // 回傳全工作時段（扣除午休時間 12:00-13:00）
       const currentDate = new Date(startDate)
       while (currentDate <= endDate) {
         const dateKey = formatDateKey(currentDate)
-        const workMinutes = calculateMinutesBetween(workStart, workEnd)
-        result.slots[dateKey] = [
-          { start: workStart, end: workEnd, minutes: workMinutes },
-        ]
+        const lunchStart = '12:00'
+        const lunchEnd = '13:00'
+        const morningMinutes = calculateMinutesBetween(workStart, lunchStart)
+        const afternoonMinutes = calculateMinutesBetween(lunchEnd, workEnd)
+        const slots: TimeSlot[] = []
+
+        // 上午時段（如果工作開始時間在午休前）
+        if (morningMinutes > 0 && timeToMinutes(workStart) < timeToMinutes(lunchStart)) {
+          slots.push({ start: workStart, end: lunchStart, minutes: morningMinutes })
+        }
+        // 下午時段（如果工作結束時間在午休後）
+        if (afternoonMinutes > 0 && timeToMinutes(workEnd) > timeToMinutes(lunchEnd)) {
+          slots.push({ start: lunchEnd, end: workEnd, minutes: afternoonMinutes })
+        }
+        // 如果沒有有效時段，回傳整段工作時間
+        if (slots.length === 0) {
+          const workMinutes = calculateMinutesBetween(workStart, workEnd)
+          slots.push({ start: workStart, end: workEnd, minutes: workMinutes })
+        }
+
+        result.slots[dateKey] = slots
         result.busyEvents[dateKey] = []
         currentDate.setDate(currentDate.getDate() + 1)
       }
@@ -187,7 +207,11 @@ export async function getAvailableSlots(
 
 // 輔助函數
 function formatDateKey(date: Date): string {
-  return date.toISOString().split('T')[0]
+  // 使用本地日期格式，避免 UTC 時區偏移導致日期錯誤
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function formatTime(date: Date): string {

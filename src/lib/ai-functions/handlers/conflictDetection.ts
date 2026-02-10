@@ -46,8 +46,17 @@ export function checkTaskConflicts(
 ): ConflictInfo[] {
   const conflicts: ConflictInfo[] = []
 
-  const taskStart = new Date(task.startTime).getTime()
-  const taskEnd = new Date(task.endTime).getTime()
+  const taskStartDate = new Date(task.startTime)
+  const taskEndDate = new Date(task.endTime)
+
+  // 檢查日期是否有效，避免 Invalid time value
+  if (isNaN(taskStartDate.getTime()) || isNaN(taskEndDate.getTime())) {
+    console.warn('[ConflictDetection] 跳過無效時間的任務:', task.taskTitle, task.startTime, task.endTime)
+    return conflicts
+  }
+
+  const taskStart = taskStartDate.getTime()
+  const taskEnd = taskEndDate.getTime()
 
   for (const event of busyEvents) {
     const eventStart = new Date(event.start).getTime()
@@ -109,8 +118,15 @@ export function checkScheduleConflicts(
   const allConflicts: ConflictInfo[] = []
 
   for (const task of scheduledTasks) {
+    // 檢查 startTime 是否為有效日期，避免 Invalid time value
+    const taskDateObj = new Date(task.startTime)
+    if (isNaN(taskDateObj.getTime())) {
+      console.warn('[ConflictDetection] 跳過無效 startTime 的任務:', task.taskTitle, task.startTime)
+      continue
+    }
+
     // 取得任務日期對應的忙碌事件
-    const taskDate = new Date(task.startTime).toISOString().split('T')[0]
+    const taskDate = taskDateObj.toISOString().split('T')[0]
     const busyEvents = busyEventsByDate[taskDate] || []
 
     const taskConflicts = checkTaskConflicts(task, busyEvents)
@@ -138,6 +154,10 @@ export function suggestAlternativeTime(
   taskDurationMinutes: number = 60
 ): { suggestedStart: string; suggestedEnd: string } | null {
   const taskDate = new Date(task.startTime)
+  if (isNaN(taskDate.getTime())) {
+    console.warn('[ConflictDetection] suggestAlternativeTime: 無效時間', task.startTime)
+    return null
+  }
   const dateStr = taskDate.toISOString().split('T')[0]
 
   // 建立當天的工作時段（每 30 分鐘一個時段）
