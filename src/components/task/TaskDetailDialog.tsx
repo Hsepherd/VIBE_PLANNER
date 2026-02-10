@@ -21,19 +21,20 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
-import { Calendar as CalendarComponent } from '@/components/ui/calendar'
+import { DateTimePicker } from '@/components/ui/datetime-picker'
 import type { Task } from '@/lib/useSupabaseTasks'
 import type { Project } from '@/lib/useSupabaseProjects'
 import { RecurrenceSelector } from '@/components/task/RecurrenceSelector'
 import { getTagColor, TAG_COLORS, type Tag } from '@/lib/tags'
 import { getGroupColor, GROUP_COLORS, type Group } from '@/lib/groups'
-import { format, setHours, setMinutes, addMinutes } from 'date-fns'
+import { format } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
 import {
   Check,
   Trash2,
   Plus,
   ChevronDown,
+  ChevronRight,
   User,
   FolderOpen,
   FolderKanban,
@@ -44,6 +45,7 @@ import {
   Edit3,
   Users,
   Loader2,
+  FileText,
 } from 'lucide-react'
 
 // 優先級設定
@@ -192,6 +194,8 @@ interface TaskDetailDialogProps {
   onRemoveGroup?: (name: string) => void
   projects?: Project[]
   onAddProject?: (name: string) => Promise<Project | null>
+  // 會議逐字稿（當任務來自會議記錄時顯示）
+  meetingTranscript?: string
 }
 
 export function TaskDetailDialog({
@@ -210,6 +214,7 @@ export function TaskDetailDialog({
   onRemoveGroup,
   projects = [],
   onAddProject,
+  meetingTranscript,
 }: TaskDetailDialogProps) {
   // 本地狀態用於編輯
   const [localTask, setLocalTask] = useState<Task | null>(null)
@@ -238,6 +243,11 @@ export function TaskDetailDialog({
   // 備註欄位
   const [isEditingNotes, setIsEditingNotes] = useState(false)
   const [editingNotes, setEditingNotes] = useState('')
+  // 會議逐字稿展開狀態
+  const [isTranscriptExpanded, setIsTranscriptExpanded] = useState(false)
+  // 日期 Popover 受控狀態
+  const [startDateOpen, setStartDateOpen] = useState(false)
+  const [dueDateOpen, setDueDateOpen] = useState(false)
 
   // 當 task 變化時更新本地狀態
   useEffect(() => {
@@ -246,6 +256,8 @@ export function TaskDetailDialog({
       setShowMemberManager(false)
       setShowTagManager(false)
       setShowGroupManager(false)
+      setStartDateOpen(false)
+      setDueDateOpen(false)
       setEditingStepIndex(null)
       setIsAddingStep(false)
       setNewStepText('')
@@ -487,37 +499,29 @@ export function TaskDetailDialog({
               <div className="flex items-center h-9 hover:bg-gray-100 rounded-md px-2 -mx-2">
                 <span className="text-[13px] text-gray-500 w-[72px] shrink-0">開始日期</span>
                 <div className="flex-1">
-                  <Popover>
+                  <Popover open={startDateOpen} onOpenChange={setStartDateOpen}>
                     <PopoverTrigger asChild>
                       <button className="flex items-center w-full group">
                         <span className="flex items-center gap-1.5 text-[13px] text-gray-900">
                           <CalendarDays className="h-4 w-4 text-green-500" />
                           {displayTask.startDate
-                            ? format(new Date(displayTask.startDate), 'yyyy/M/d', { locale: zhTW })
+                            ? (() => {
+                                const d = new Date(displayTask.startDate)
+                                const hasTime = d.getHours() !== 0 || d.getMinutes() !== 0
+                                return hasTime
+                                  ? format(d, 'yyyy/M/d HH:mm', { locale: zhTW })
+                                  : format(d, 'yyyy/M/d', { locale: zhTW })
+                              })()
                             : '未設定'}
                         </span>
                       </button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
-                      <CalendarComponent
-                        mode="single"
-                        selected={displayTask.startDate ? new Date(displayTask.startDate) : undefined}
-                        onSelect={(date) => handleUpdate({ startDate: date })}
-                        locale={zhTW}
-                        defaultMonth={displayTask.startDate ? new Date(displayTask.startDate) : new Date()}
+                      <DateTimePicker
+                        value={displayTask.startDate ? new Date(displayTask.startDate) : undefined}
+                        onChange={(date) => handleUpdate({ startDate: date })}
+                        onClose={() => setStartDateOpen(false)}
                       />
-                      {displayTask.startDate && (
-                        <div className="p-2 border-t">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="w-full text-destructive hover:text-destructive"
-                            onClick={() => handleUpdate({ startDate: undefined })}
-                          >
-                            清除日期
-                          </Button>
-                        </div>
-                      )}
                     </PopoverContent>
                   </Popover>
                 </div>
@@ -527,37 +531,29 @@ export function TaskDetailDialog({
               <div className="flex items-center h-9 hover:bg-gray-100 rounded-md px-2 -mx-2">
                 <span className="text-[13px] text-gray-500 w-[72px] shrink-0">截止日期</span>
                 <div className="flex-1">
-                  <Popover>
+                  <Popover open={dueDateOpen} onOpenChange={setDueDateOpen}>
                     <PopoverTrigger asChild>
                       <button className="flex items-center w-full group">
                         <span className="flex items-center gap-1.5 text-[13px] text-gray-900">
                           <CalendarDays className="h-4 w-4 text-red-400" />
                           {displayTask.dueDate
-                            ? format(new Date(displayTask.dueDate), 'yyyy/M/d', { locale: zhTW })
+                            ? (() => {
+                                const d = new Date(displayTask.dueDate)
+                                const hasTime = d.getHours() !== 0 || d.getMinutes() !== 0
+                                return hasTime
+                                  ? format(d, 'yyyy/M/d HH:mm', { locale: zhTW })
+                                  : format(d, 'yyyy/M/d', { locale: zhTW })
+                              })()
                             : '未設定'}
                         </span>
                       </button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
-                      <CalendarComponent
-                        mode="single"
-                        selected={displayTask.dueDate ? new Date(displayTask.dueDate) : undefined}
-                        onSelect={(date) => handleUpdate({ dueDate: date })}
-                        locale={zhTW}
-                        defaultMonth={displayTask.dueDate ? new Date(displayTask.dueDate) : new Date()}
+                      <DateTimePicker
+                        value={displayTask.dueDate ? new Date(displayTask.dueDate) : undefined}
+                        onChange={(date) => handleUpdate({ dueDate: date })}
+                        onClose={() => setDueDateOpen(false)}
                       />
-                      {displayTask.dueDate && (
-                        <div className="p-2 border-t">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="w-full text-destructive hover:text-destructive"
-                            onClick={() => handleUpdate({ dueDate: undefined })}
-                          >
-                            清除日期
-                          </Button>
-                        </div>
-                      )}
                     </PopoverContent>
                   </Popover>
                 </div>
@@ -1105,6 +1101,31 @@ export function TaskDetailDialog({
                   <p className="text-sm text-gray-600 leading-relaxed bg-gray-50 rounded-lg p-4">
                     {displayTask.description || '無詳細描述'}
                   </p>
+                </section>
+              )}
+
+              {/* 會議逐字稿 - 僅當有逐字稿時顯示 */}
+              {meetingTranscript && (
+                <section className="mt-6 pt-4 border-t border-gray-200">
+                  <button
+                    onClick={() => setIsTranscriptExpanded(!isTranscriptExpanded)}
+                    className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-gray-900 transition-colors w-full"
+                  >
+                    {isTranscriptExpanded ? (
+                      <ChevronDown className="h-4 w-4" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4" />
+                    )}
+                    <FileText className="h-4 w-4 text-indigo-500" />
+                    原始會議逐字稿
+                  </button>
+                  {isTranscriptExpanded && (
+                    <div className="mt-3 p-4 bg-indigo-50/50 rounded-lg border border-indigo-100 max-h-[300px] overflow-y-auto">
+                      <pre className="text-sm text-gray-600 whitespace-pre-wrap font-mono leading-relaxed">
+                        {meetingTranscript}
+                      </pre>
+                    </div>
+                  )}
                 </section>
               )}
             </div>

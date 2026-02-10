@@ -43,6 +43,8 @@ import {
   Plus,
   X,
   Undo2,
+  Pencil,
+  Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
@@ -62,13 +64,16 @@ import { getGroups, addGroup, removeGroup, type Group } from '@/lib/groups'
 type ViewMode = 'day' | 'week' | 'month'
 
 export default function CalendarPage() {
-  const { tasks, isLoading, updateTask: updateSupabaseTask, addTask, completeTask } = useSupabaseTasks()
+  const { tasks, isLoading, updateTask: updateSupabaseTask, addTask, completeTask, deleteTask } = useSupabaseTasks()
   const { projects, addProject: addProjectToDb } = useSupabaseProjects()
 
   const [currentDate, setCurrentDate] = useState(new Date())
   const [viewMode, setViewMode] = useState<ViewMode>('week')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [expandedAllDay, setExpandedAllDay] = useState(false) // 全天區域是否展開
+
+  // 右鍵選單狀態
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; task: Task } | null>(null)
 
   // 觸控裝置偵測
   const [isTouchDevice, setIsTouchDevice] = useState(false)
@@ -192,39 +197,144 @@ export default function CalendarPage() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [selectedTask])
 
-  // 取得某天的任務（支援日期區間）
+  // 檢查重複任務是否應該出現在某天
+  const isRecurringOnDate = (task: Task, targetDate: Date): boolean => {
+    if (!task.recurrenceType || task.recurrenceType === 'none') return false
+    if (!task.startDate) return false
+
+    const taskStart = startOfDay(new Date(task.startDate))
+    // 只在開始日期之後（含當天）顯示
+    if (targetDate < taskStart) return false
+    // 如果有結束日期限制
+    if (task.recurrenceConfig?.endDate) {
+      const endDate = startOfDay(new Date(task.recurrenceConfig.endDate))
+      if (targetDate > endDate) return false
+    }
+
+    const interval = task.recurrenceConfig?.interval || 1
+    const diffDays = Math.round((targetDate.getTime() - taskStart.getTime()) / (1000 * 60 * 60 * 24))
+
+    switch (task.recurrenceType) {
+      case 'daily':
+        return diffDays % interval === 0
+      case 'weekly': {
+        const weekdays = task.recurrenceConfig?.weekdays
+        if (weekdays && weekdays.length > 0) {
+          const dayOfWeek = targetDate.getDay() === 0 ? 7 : targetDate.getDay()
+          if (!weekdays.includes(dayOfWeek)) return false
+          // 檢查 interval: 計算第幾週
+          if (interval > 1) {
+            const diffWeeks = Math.floor(diffDays / 7)
+            if (diffWeeks % interval !== 0) return false
+          }
+          return true
+        }
+        return diffDays % (7 * interval) === 0
+      }
+      case 'monthly': {
+        const monthDay = task.recurrenceConfig?.monthDay || taskStart.getDate()
+        // 處理月底情況（如 31 號在只有 30 天的月份）
+        const lastDayOfMonth = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0).getDate()
+        const effectiveDay = Math.min(monthDay, lastDayOfMonth)
+        if (targetDate.getDate() !== effectiveDay) return false
+        // 檢查 interval
+        const monthDiff = (targetDate.getFullYear() - taskStart.getFullYear()) * 12 +
+                          (targetDate.getMonth() - taskStart.getMonth())
+        return monthDiff >= 0 && monthDiff % interval === 0
+      }
+      case 'yearly': {
+        if (targetDate.getMonth() !== taskStart.getMonth()) return false
+        // 處理閏年 2/29
+        const lastDay = new Date(targetDate.getFullYear(), taskStart.getMonth() + 1, 0).getDate()
+        const effectiveDay = Math.min(taskStart.getDate(), lastDay)
+        if (targetDate.getDate() !== effectiveDay) return false
+        const yearDiff = targetDate.getFullYear() - taskStart.getFullYear()
+        return yearDiff >= 0 && yearDiff % interval === 0
+      }
+      default:
+        return false
+    }
+  }
+
+  // 為重複任務產生該天的虛擬實例（保留原始時間）
+  const createRecurringInstance = (task: Task, targetDate: Date): Task => {
+    const originalStart = task.startDate ? new Date(task.startDate) : new Date()
+    const originalEnd = task.dueDate ? new Date(task.dueDate) : null
+
+    // 複製原始時間到目標日期
+    const newStart = new Date(targetDate)
+    newStart.setHours(originalStart.getHours(), originalStart.getMinutes(), 0, 0)
+
+    let newEnd: Date | undefined
+    if (originalEnd) {
+      newEnd = new Date(targetDate)
+      newEnd.setHours(originalEnd.getHours(), originalEnd.getMinutes(), 0, 0)
+    }
+
+    return {
+      ...task,
+      id: `${task.id}__${format(targetDate, 'yyyy-MM-dd')}`, // 虛擬實例唯一 ID
+      startDate: newStart,
+      dueDate: newEnd,
+      _isVirtualInstance: true, // 標記為虛擬實例
+      _originalTaskId: task.id, // 保留原始 ID
+    } as Task
+  }
+
+  // 取得某天的任務（支援日期區間 + 重複任務展開）
   const getTasksForDate = (date: Date) => {
     const targetDate = startOfDay(date)
     const today = startOfDay(new Date())
+    const result: Task[] = []
 
-    return tasks.filter((task: Task) => {
-      // 如果有開始日期和截止日期，檢查目標日期是否在區間內
+    tasks.forEach((task: Task) => {
+      // 已完成的重複任務不展開
+      const isRecurring = task.recurrenceType && task.recurrenceType !== 'none'
+
+      // 先檢查是否為重複任務且應出現在這天
+      if (isRecurring && task.status !== 'completed') {
+        if (isRecurringOnDate(task, targetDate)) {
+          // 如果是原始日期就用原始任務，否則產生虛擬實例
+          if (task.startDate && isSameDay(new Date(task.startDate), targetDate)) {
+            result.push(task)
+          } else {
+            result.push(createRecurringInstance(task, targetDate))
+          }
+        }
+        return
+      }
+
+      // 非重複任務：原始邏輯
       if (task.startDate && task.dueDate) {
         const start = startOfDay(new Date(task.startDate))
         const end = startOfDay(new Date(task.dueDate))
-        return targetDate >= start && targetDate <= end
+        if (targetDate >= start && targetDate <= end) {
+          result.push(task)
+        }
+        return
       }
 
-      // 只有開始日期：從開始日期當天及之後顯示（但不超過 7 天後）
       if (task.startDate) {
         const start = startOfDay(new Date(task.startDate))
         const maxEnd = addDays(start, 7)
-        return targetDate >= start && targetDate <= maxEnd
+        if (targetDate >= start && targetDate <= maxEnd) {
+          result.push(task)
+        }
+        return
       }
 
-      // 只有截止日期：從今天到截止日都顯示（讓用戶提前看到即將到期的任務）
       if (task.dueDate) {
         const end = startOfDay(new Date(task.dueDate))
-        // 如果截止日在今天之前，只在截止日當天顯示
         if (end < today) {
-          return isSameDay(end, targetDate)
+          if (isSameDay(end, targetDate)) result.push(task)
+        } else {
+          if (targetDate >= today && targetDate <= end) result.push(task)
         }
-        // 截止日在今天或之後，從今天到截止日都顯示
-        return targetDate >= today && targetDate <= end
+        return
       }
-
-      return false
     })
+
+    return result
   }
 
   // 優先級顏色
@@ -372,6 +482,35 @@ export default function CalendarPage() {
     }
   }
 
+  // 右鍵選單處理
+  const handleTaskContextMenu = useCallback((e: React.MouseEvent, task: Task) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ x: e.clientX, y: e.clientY, task })
+  }, [])
+
+  const handleDeleteTask = useCallback(async (task: Task) => {
+    setContextMenu(null)
+    // 虛擬重複實例用原始 ID
+    const taskId = (task as any)._originalTaskId || task.id
+    if (!confirm(`確定要刪除「${task.title}」嗎？`)) return
+    try {
+      await deleteTask(taskId)
+      if (selectedTask?.id === taskId) setSelectedTask(null)
+      toast.success(`已刪除「${task.title}」`)
+    } catch {
+      toast.error('刪除失敗')
+    }
+  }, [deleteTask, selectedTask])
+
+  // 點擊任意處關閉右鍵選單
+  useEffect(() => {
+    if (!contextMenu) return
+    const close = () => setContextMenu(null)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [contextMenu])
+
   // 點擊時間格新增任務
   const handleTimeSlotClick = useCallback((day: Date, hour: number, minute: number = 0) => {
     const startTime = setMinutes(setHours(day, hour), minute)
@@ -460,6 +599,10 @@ export default function CalendarPage() {
 
   // 開始拖曳任務（移動或調整時長）
   const handleDragStart = useCallback((e: React.MouseEvent, task: Task, mode: 'move' | 'resize', dayIndex: number = 0) => {
+    // 只處理左鍵，右鍵留給 context menu
+    if (e.button !== 0) return
+    // 虛擬重複實例不可拖曳
+    if ((task as any)._isVirtualInstance) return
     e.preventDefault()
     e.stopPropagation()
 
@@ -592,7 +735,8 @@ export default function CalendarPage() {
         )
       } else {
         // 只是點擊，打開 popup（找回原始任務資料）
-        const originalTask = tasks.find((t: Task) => t.id === draggingTask.id)
+        const taskId = (draggingTask as any)._originalTaskId || draggingTask.id
+        const originalTask = tasks.find((t: Task) => t.id === taskId)
         if (originalTask) {
           setSelectedTask(originalTask)
         }
@@ -624,6 +768,7 @@ export default function CalendarPage() {
         ${compact ? 'text-xs' : 'text-sm'}
       `}
       onClick={() => setSelectedTask(task)}
+      onContextMenu={(e) => handleTaskContextMenu(e, task)}
     >
       <div className="flex items-start gap-2">
         <button
@@ -796,6 +941,37 @@ export default function CalendarPage() {
     delta: 10, // 開始追蹤的最小距離
   })
 
+  // 展開重複任務到本週每一天（放在 CalendarPage 層級避免 hook 順序問題）
+  const expandedTasks = useMemo(() => {
+    const result: Task[] = []
+    const seen = new Set<string>()
+
+    tasks.forEach((task: Task) => {
+      const isRecurring = task.recurrenceType && task.recurrenceType !== 'none' && task.status !== 'completed'
+
+      if (isRecurring) {
+        weekDays.forEach(day => {
+          const dayStart = startOfDay(day)
+          if (isRecurringOnDate(task, dayStart)) {
+            const key = `${task.id}-${format(dayStart, 'yyyy-MM-dd')}`
+            if (!seen.has(key)) {
+              seen.add(key)
+              if (task.startDate && isSameDay(new Date(task.startDate), dayStart)) {
+                result.push(task)
+              } else {
+                result.push(createRecurringInstance(task, dayStart))
+              }
+            }
+          }
+        })
+      } else {
+        result.push(task)
+      }
+    })
+
+    return result
+  }, [tasks, weekDays])
+
   // 週視圖 - 支援跨日任務橫條顯示
   const WeekView = () => {
     const weekStart = startOfDay(weekDays[0])
@@ -829,7 +1005,7 @@ export default function CalendarPage() {
     // 計算任務在這週的顯示資訊（全天任務 + 跨日任務都在這裡顯示）
     const getTaskBarsForWeek = () => {
       // 找出所有與這週有交集的「全天或跨日」任務
-      const relevantTasks = tasks.filter((task: Task) => {
+      const relevantTasks = expandedTasks.filter((task: Task) => {
         // 排除單日時間任務（這些會在時間格裡顯示）
         if (isSingleDayTimedTask(task)) return false
 
@@ -947,6 +1123,7 @@ export default function CalendarPage() {
                           ${task.status === 'completed' ? 'opacity-50' : ''}
                         `}
                         onClick={() => setSelectedTask(task)}
+                        onContextMenu={(e) => handleTaskContextMenu(e, task)}
                         title={task.title}
                       >
                         <span className={`w-2 h-2 rounded-full shrink-0 ${colors.dot}`} />
@@ -1001,7 +1178,7 @@ export default function CalendarPage() {
 
                 // 取得這天的「單日時間任務」（有時間且同一天結束）
                 // 注意：如果有拖曳中的任務，使用拖曳後的位置來判斷
-                const timedTasks = tasks.filter((task: Task) => {
+                const timedTasks = expandedTasks.filter((task: Task) => {
                   // 如果是正在拖曳的任務，使用拖曳後的位置判斷
                   const currentTask = draggingTask?.id === task.id ? draggingTask : task
 
@@ -1191,6 +1368,7 @@ export default function CalendarPage() {
                             width: `calc(${columnWidth}% - 4px)`,
                           }}
                           onMouseDown={(e) => handleDragStart(e, task, 'move', dayIdx)}
+                          onContextMenu={(e) => handleTaskContextMenu(e, task)}
                           onTouchStart={() => isTouchDevice && handleTouchStart(task, dayIdx)}
                           onTouchEnd={handleTouchEnd}
                           onTouchCancel={handleTouchEnd}
@@ -1708,6 +1886,42 @@ export default function CalendarPage() {
         projects={projects}
         onAddProject={handleAddProject}
       />
+
+      {/* 右鍵選單 */}
+      {contextMenu && (() => {
+        // 限制選單不超出螢幕
+        const menuW = 160, menuH = 88
+        const x = Math.min(contextMenu.x, window.innerWidth - menuW - 8)
+        const y = Math.min(contextMenu.y, window.innerHeight - menuH - 8)
+        return (
+        <div
+          className="fixed z-50 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 py-1 min-w-[160px]"
+          style={{ left: `${x}px`, top: `${y}px` }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            onClick={() => {
+              // 虛擬實例找回原始任務
+              const originalId = (contextMenu.task as any)._originalTaskId || contextMenu.task.id
+              const originalTask = tasks.find((t: Task) => t.id === originalId) || contextMenu.task
+              setSelectedTask(originalTask)
+              setContextMenu(null)
+            }}
+          >
+            <Pencil className="h-4 w-4" />
+            編輯任務
+          </button>
+          <button
+            className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+            onClick={() => handleDeleteTask(contextMenu.task)}
+          >
+            <Trash2 className="h-4 w-4" />
+            刪除任務
+          </button>
+        </div>
+        )
+      })()}
     </div>
   )
 }
