@@ -814,9 +814,14 @@ ${group.sourceContext}
   // 確認套用排程
   const [isApplyingSchedule, setIsApplyingSchedule] = useState(false)
 
-  const handleApplySchedule = async () => {
+  const handleApplySchedule = async (selectedTaskIds?: Set<string>) => {
     if (!pendingSchedulePreview || isApplyingSchedule) return
     setIsApplyingSchedule(true)
+
+    // 過濾只套用使用者勾選的任務
+    const tasksToApply = selectedTaskIds
+      ? pendingSchedulePreview.scheduledTasks.filter(t => selectedTaskIds.has(t.taskId))
+      : pendingSchedulePreview.scheduledTasks
 
     try {
       // 取得使用者 ID（從 useAuth hook）
@@ -839,7 +844,7 @@ ${group.sourceContext}
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             userId,
-            tasks: pendingSchedulePreview.scheduledTasks.map(task => {
+            tasks: tasksToApply.map(task => {
               const times = getEffectiveTime(task)
               const newTaskData = pendingSchedulePreview.newTasksData?.find(
                 t => t.tempId === task.taskId
@@ -875,7 +880,7 @@ ${group.sourceContext}
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             userId,
-            scheduledTasks: pendingSchedulePreview.scheduledTasks.map(task => {
+            scheduledTasks: tasksToApply.map(task => {
               const times = getEffectiveTime(task)
               return {
                 taskId: task.taskId,
@@ -900,7 +905,7 @@ ${group.sourceContext}
           })
 
           // 記錄用戶套用排程的行為（用於學習）
-          logScheduleApplied(userId, pendingSchedulePreview.scheduledTasks.map(task => {
+          logScheduleApplied(userId, tasksToApply.map(task => {
             const times = getEffectiveTime(task)
             return {
               taskId: task.taskId,
@@ -1789,8 +1794,8 @@ ${group.sourceContext}
               </div>
             )}
 
-            {/* 待確認排程預覽 */}
-            {pendingSchedulePreview && pendingSchedulePreview.scheduledTasks.length > 0 && (
+            {/* 待確認排程預覽（等 streaming 結束才顯示，避免先跳出預覽再跳出文字） */}
+            {!isLoading && pendingSchedulePreview && pendingSchedulePreview.scheduledTasks.length > 0 && (
               <div className="py-4 px-4">
                 <div className="max-w-3xl mx-auto">
                   <SchedulePreview

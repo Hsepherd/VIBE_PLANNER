@@ -84,11 +84,13 @@ export async function getUnscheduledTasks(
     throw new Error(`取得任務失敗: ${error.message}`)
   }
 
-  // 過濾未排程任務
+  // 過濾未排程任務（排除已有今天或未來 start_date 的任務）
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
   const unscheduledTasks = (tasks || []).filter((task) => {
     if (!task.start_date) return true
-    const startDate = new Date(task.start_date)
-    return startDate < today
+    // 取日期部分比較，避免時區問題
+    const taskDateStr = task.start_date.substring(0, 10)
+    return taskDateStr < todayStr
   })
 
   // 格式化結果
