@@ -32,6 +32,7 @@ export interface RecurrenceConfig {
   monthDay?: number         // 每月幾號，僅 monthly 使用
   endDate?: string          // 結束日期（可選）
   maxOccurrences?: number   // 最大次數（可選）
+  excludedDates?: string[]  // 被排除的日期（單次修改時使用），格式：yyyy-MM-dd
 }
 
 // 任務類型（用於排程）
@@ -62,6 +63,8 @@ export interface DbTask {
   // AI 排程欄位
   estimated_minutes: number | null  // 預估時間（分鐘）
   task_type: TaskType | null        // 任務類型：focus（專注）或 background（背景）
+  // 會議記錄關聯欄位
+  meeting_note_id: string | null    // 關聯的會議記錄 ID
 }
 
 export interface DbConversation {
@@ -92,6 +95,31 @@ export interface DbApiUsage {
   cost: number
   user_id?: string
   created_at: string
+}
+
+// 會議記錄結構化內容
+export interface OrganizedMeetingNotes {
+  title: string
+  date: string
+  participants: string[]
+  discussionPoints: { topic: string; details: string }[]
+  decisions: string[]
+  actionItems: { task: string; description?: string; assignee?: string; group?: string; dueDate?: string; startDate?: string }[]
+  nextSteps: string[]
+}
+
+export interface DbMeetingNote {
+  id: string
+  title: string
+  date: string
+  participants: string[]
+  raw_content: string
+  organized: OrganizedMeetingNotes
+  markdown: string
+  user_id: string
+  chat_session_id: string | null
+  created_at: string
+  updated_at: string
 }
 
 // ============ 專案 API ============
@@ -340,6 +368,64 @@ export const tasksApi = {
 
     return { completedTask }
   },
+
+  // 根據會議記錄 ID 取得任務
+  async getByMeetingNoteId(meetingNoteId: string): Promise<DbTask[]> {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('meeting_note_id', meetingNoteId)
+      .order('created_at', { ascending: true })
+
+    if (error) throw error
+    return data || []
+  },
+}
+
+// 從會議記錄批次建立任務
+export async function createTasksFromMeetingNotes(
+  meetingNoteId: string,
+  actionItems: { task: string; description?: string; assignee?: string; group?: string; dueDate?: string; startDate?: string }[],
+  userId: string
+): Promise<DbTask[]> {
+  const supabase = getSupabase()
+  const now = new Date().toISOString()
+  const today = new Date().toISOString().split('T')[0] // 今天日期 YYYY-MM-DD
+
+  const tasksToInsert = actionItems.map(item => ({
+    id: crypto.randomUUID(),
+    title: item.task,
+    description: item.description || null,
+    notes: null,
+    assignee: item.assignee || null,
+    due_date: item.dueDate ? new Date(item.dueDate).toISOString() : null,
+    start_date: item.startDate ? new Date(item.startDate).toISOString() : new Date(today).toISOString(),
+    status: 'pending' as const,
+    priority: 'medium' as const,
+    project_id: null,
+    tags: null,
+    group_name: item.group || null,
+    user_id: userId,
+    meeting_note_id: meetingNoteId,
+    recurrence_type: 'none' as const,
+    recurrence_config: null,
+    parent_task_id: null,
+    is_recurring_instance: false,
+    estimated_minutes: null,
+    task_type: null,
+    created_at: now,
+    updated_at: now,
+    completed_at: null,
+  }))
+
+  const { data, error } = await supabase
+    .from('tasks')
+    .insert(tasksToInsert)
+    .select()
+
+  if (error) throw error
+  return data || []
 }
 
 // 計算下一個執行日期
@@ -845,5 +931,93 @@ export const taskCategoriesApi = {
       .delete()
       .eq('id', id)
     if (error) throw error
+  },
+}
+
+// ============ 會議記錄 API ============
+
+export const meetingNotesApi = {
+  // 取得所有會議記錄
+  async getAll(): Promise<DbMeetingNote[]> {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('meeting_notes')
+      .select('*')
+      .order('date', { ascending: false })
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+    return data || []
+  },
+
+  // 取得單一會議記錄
+  async getById(id: string): Promise<DbMeetingNote | null> {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('meeting_notes')
+      .select('*')
+      .eq('id', id)
+      .single()
+
+    if (error) throw error
+    return data
+  },
+
+  // 建立會議記錄
+  async create(
+    meetingNote: Omit<DbMeetingNote, 'id' | 'created_at' | 'updated_at' | 'user_id'>
+  ): Promise<DbMeetingNote> {
+    const supabase = getSupabase()
+    const userId = await getCurrentUserId()
+
+    if (!userId) {
+      throw new Error('必須登入才能建立會議記錄')
+    }
+
+    const { data, error } = await supabase
+      .from('meeting_notes')
+      .insert({ ...meetingNote, user_id: userId })
+      .select()
+      .single()
+
+    if (error) throw error
+    return data
+  },
+
+  // 更新會議記錄
+  async update(id: string, updates: Partial<DbMeetingNote>): Promise<DbMeetingNote> {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('meeting_notes')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) throw error
+    return data
+  },
+
+  // 刪除會議記錄
+  async delete(id: string): Promise<void> {
+    const supabase = getSupabase()
+    const { error } = await supabase
+      .from('meeting_notes')
+      .delete()
+      .eq('id', id)
+    if (error) throw error
+  },
+
+  // 搜尋會議記錄（全文搜尋）
+  async search(query: string): Promise<DbMeetingNote[]> {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('meeting_notes')
+      .select('*')
+      .or(`title.ilike.%${query}%,raw_content.ilike.%${query}%`)
+      .order('date', { ascending: false })
+
+    if (error) throw error
+    return data || []
   },
 }

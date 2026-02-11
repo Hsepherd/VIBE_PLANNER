@@ -57,6 +57,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { TaskDetailDialog } from '@/components/task/TaskDetailDialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
 import { getTeamMembers, addTeamMember, removeTeamMember } from '@/lib/team-members'
 import { getTags, addTag, removeTag, type Tag } from '@/lib/tags'
 import { getGroups, addGroup, removeGroup, type Group } from '@/lib/groups'
@@ -171,6 +179,16 @@ export default function CalendarPage() {
   const [dragStartDayIndex, setDragStartDayIndex] = useState(0) // 開始拖曳時的天數索引
   const timeGridRef = useRef<HTMLDivElement>(null)
 
+  // 重複任務拖曳確認對話框狀態
+  const [pendingRecurringEdit, setPendingRecurringEdit] = useState<{
+    task: Task           // 被拖曳的任務（含新時間）
+    originalTaskId: string // 原始父任務 ID
+    instanceDate: string   // 該實例的日期 yyyy-MM-dd
+    newStartDate?: Date
+    newDueDate?: Date
+    mode: 'move' | 'resize'
+  } | null>(null)
+
   // 長按觸發調整模式（觸控裝置專用）
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null)
   const [longPressTask, setLongPressTask] = useState<Task | null>(null)
@@ -201,6 +219,11 @@ export default function CalendarPage() {
   const isRecurringOnDate = (task: Task, targetDate: Date): boolean => {
     if (!task.recurrenceType || task.recurrenceType === 'none') return false
     if (!task.startDate) return false
+
+    // 檢查是否為被排除的日期（單次修改後該日期已獨立）
+    const excludedDates = task.recurrenceConfig?.excludedDates || []
+    const targetStr = format(targetDate, 'yyyy-MM-dd')
+    if (excludedDates.includes(targetStr)) return false
 
     const taskStart = startOfDay(new Date(task.startDate))
     // 只在開始日期之後（含當天）顯示
@@ -601,8 +624,6 @@ export default function CalendarPage() {
   const handleDragStart = useCallback((e: React.MouseEvent, task: Task, mode: 'move' | 'resize', dayIndex: number = 0) => {
     // 只處理左鍵，右鍵留給 context menu
     if (e.button !== 0) return
-    // 虛擬重複實例不可拖曳
-    if ((task as any)._isVirtualInstance) return
     e.preventDefault()
     e.stopPropagation()
 
@@ -700,39 +721,67 @@ export default function CalendarPage() {
   const handleDragEnd = useCallback(async () => {
     if (draggingTask && dragMode) {
       if (hasDragged) {
-        // 保存原始時間用於 Undo
-        const originalTask = tasks.find((t: Task) => t.id === draggingTask.id)
-        const originalStartDate = originalTask?.startDate
-        const originalDueDate = originalTask?.dueDate
+        // 判斷是否為重複任務（虛擬實例或原始重複任務）
+        const isVirtual = (draggingTask as any)._isVirtualInstance
+        const originalTaskId = isVirtual
+          ? (draggingTask as any)._originalTaskId
+          : draggingTask.id
+        const parentTask = tasks.find((t: Task) => t.id === originalTaskId)
+        const isRecurring = parentTask?.recurrenceType && parentTask.recurrenceType !== 'none'
 
-        // 真的有拖曳，儲存更新
-        await updateSupabaseTask(draggingTask.id, {
-          startDate: draggingTask.startDate,
-          dueDate: draggingTask.dueDate,
-        })
-
-        // 顯示 Toast 通知（帶有 Undo 按鈕）
-        const newStart = draggingTask.startDate ? format(new Date(draggingTask.startDate), 'HH:mm') : ''
-        const newEnd = draggingTask.dueDate ? format(new Date(draggingTask.dueDate), 'HH:mm') : ''
-        const timeText = newStart && newEnd ? `${newStart} - ${newEnd}` : newStart || newEnd
-
-        toast.success(
-          dragMode === 'move' ? '已移動任務' : '已調整時長',
-          {
-            description: `${draggingTask.title}: ${timeText}`,
-            action: {
-              label: '還原',
-              onClick: async () => {
-                await updateSupabaseTask(draggingTask.id, {
-                  startDate: originalStartDate,
-                  dueDate: originalDueDate,
-                })
-                toast.info('已還原任務時間')
-              },
-            },
-            duration: 5000,
+        if (isRecurring && parentTask) {
+          // 重複任務：先提取該實例的日期，再彈出確認對話框
+          let instanceDateStr: string
+          if (isVirtual) {
+            // 從虛擬 ID 取得日期：格式 "parentId__yyyy-MM-dd"
+            const parts = draggingTask.id.split('__')
+            instanceDateStr = parts[parts.length - 1]
+          } else {
+            // 原始任務本身在其 startDate 日期
+            instanceDateStr = format(new Date(parentTask.startDate!), 'yyyy-MM-dd')
           }
-        )
+
+          setPendingRecurringEdit({
+            task: draggingTask,
+            originalTaskId,
+            instanceDate: instanceDateStr,
+            newStartDate: draggingTask.startDate,
+            newDueDate: draggingTask.dueDate,
+            mode: dragMode,
+          })
+        } else {
+          // 非重複任務：直接儲存（原有邏輯）
+          const originalTask = tasks.find((t: Task) => t.id === draggingTask.id)
+          const originalStartDate = originalTask?.startDate
+          const originalDueDate = originalTask?.dueDate
+
+          await updateSupabaseTask(draggingTask.id, {
+            startDate: draggingTask.startDate,
+            dueDate: draggingTask.dueDate,
+          })
+
+          const newStart = draggingTask.startDate ? format(new Date(draggingTask.startDate), 'HH:mm') : ''
+          const newEnd = draggingTask.dueDate ? format(new Date(draggingTask.dueDate), 'HH:mm') : ''
+          const timeText = newStart && newEnd ? `${newStart} - ${newEnd}` : newStart || newEnd
+
+          toast.success(
+            dragMode === 'move' ? '已移動任務' : '已調整時長',
+            {
+              description: `${draggingTask.title}: ${timeText}`,
+              action: {
+                label: '還原',
+                onClick: async () => {
+                  await updateSupabaseTask(draggingTask.id, {
+                    startDate: originalStartDate,
+                    dueDate: originalDueDate,
+                  })
+                  toast.info('已還原任務時間')
+                },
+              },
+              duration: 5000,
+            }
+          )
+        }
       } else {
         // 只是點擊，打開 popup（找回原始任務資料）
         const taskId = (draggingTask as any)._originalTaskId || draggingTask.id
@@ -751,6 +800,102 @@ export default function CalendarPage() {
     setHasDragged(false)
     setDragStartDayIndex(0)
   }, [draggingTask, dragMode, hasDragged, tasks, updateSupabaseTask])
+
+  // 重複任務拖曳：只更動本次
+  const handleRecurringEditThisOnly = useCallback(async () => {
+    if (!pendingRecurringEdit) return
+    const { originalTaskId, instanceDate, newStartDate, newDueDate, mode } = pendingRecurringEdit
+    const parentTask = tasks.find((t: Task) => t.id === originalTaskId)
+    if (!parentTask) return
+
+    try {
+      // 1. 在父任務的 recurrenceConfig 加入排除日期
+      const currentConfig = parentTask.recurrenceConfig || {}
+      const excludedDates = [...(currentConfig.excludedDates || []), instanceDate]
+      await updateSupabaseTask(originalTaskId, {
+        recurrenceConfig: { ...currentConfig, excludedDates },
+      })
+
+      // 2. 建立一個獨立的新任務（不重複），時間為拖曳後的新時間
+      await addTask({
+        title: parentTask.title,
+        description: parentTask.description,
+        notes: parentTask.notes,
+        status: parentTask.status,
+        priority: parentTask.priority,
+        startDate: newStartDate,
+        dueDate: newDueDate,
+        assignee: parentTask.assignee,
+        projectId: parentTask.projectId,
+        tags: parentTask.tags,
+        groupName: parentTask.groupName,
+        estimatedMinutes: parentTask.estimatedMinutes,
+        taskType: parentTask.taskType,
+        parentTaskId: originalTaskId,
+        isRecurringInstance: true,
+        // 不設定 recurrenceType，讓這個任務獨立
+      })
+
+      const newStart = newStartDate ? format(new Date(newStartDate), 'M/d HH:mm') : ''
+      const newEnd = newDueDate ? format(new Date(newDueDate), 'HH:mm') : ''
+      const timeText = newStart && newEnd ? `${newStart} - ${newEnd}` : newStart || newEnd
+      toast.success('已更動本次任務', {
+        description: `${parentTask.title}: ${timeText}`,
+        duration: 3000,
+      })
+    } catch (err) {
+      console.error('更動本次任務失敗:', err)
+      toast.error('更動失敗，請重試')
+    }
+
+    setPendingRecurringEdit(null)
+  }, [pendingRecurringEdit, tasks, updateSupabaseTask, addTask])
+
+  // 重複任務拖曳：全部一起更動（更新父任務的時間）
+  const handleRecurringEditAll = useCallback(async () => {
+    if (!pendingRecurringEdit) return
+    const { originalTaskId, newStartDate, newDueDate, mode } = pendingRecurringEdit
+    const parentTask = tasks.find((t: Task) => t.id === originalTaskId)
+    if (!parentTask) return
+
+    try {
+      // 更新父任務的時間（只更新時分，保留原始日期）
+      // 「全部一起更動」只改時間，不改日期，這樣所有重複實例都會在新時間出現
+      const updates: Partial<Task> = {}
+
+      if (newStartDate && parentTask.startDate) {
+        const updatedStart = new Date(parentTask.startDate)
+        updatedStart.setHours(newStartDate.getHours(), newStartDate.getMinutes(), 0, 0)
+        updates.startDate = updatedStart
+      }
+
+      if (newDueDate && parentTask.dueDate) {
+        const updatedEnd = new Date(parentTask.dueDate)
+        updatedEnd.setHours(newDueDate.getHours(), newDueDate.getMinutes(), 0, 0)
+        updates.dueDate = updatedEnd
+      } else if (newDueDate && parentTask.startDate) {
+        // 沒有原始 dueDate 時，用 startDate 的日期 + 新的結束時間
+        const updatedEnd = new Date(parentTask.startDate)
+        updatedEnd.setHours(newDueDate.getHours(), newDueDate.getMinutes(), 0, 0)
+        updates.dueDate = updatedEnd
+      }
+
+      await updateSupabaseTask(originalTaskId, updates)
+
+      const newStart = newStartDate ? format(new Date(newStartDate), 'HH:mm') : ''
+      const newEnd = newDueDate ? format(new Date(newDueDate), 'HH:mm') : ''
+      const timeText = newStart && newEnd ? `${newStart} - ${newEnd}` : newStart || newEnd
+      toast.success('已更動所有重複任務', {
+        description: `${parentTask.title}: ${timeText}`,
+        duration: 3000,
+      })
+    } catch (err) {
+      console.error('更動所有重複任務失敗:', err)
+      toast.error('更動失敗，請重試')
+    }
+
+    setPendingRecurringEdit(null)
+  }, [pendingRecurringEdit, tasks, updateSupabaseTask])
 
   // 格式化日期顯示
   const formatTaskDate = (date: Date) => {
@@ -1867,6 +2012,57 @@ export default function CalendarPage() {
           </div>
         </div>
       )}
+
+      {/* 重複任務拖曳確認對話框 */}
+      <Dialog
+        open={!!pendingRecurringEdit}
+        onOpenChange={(open) => { if (!open) setPendingRecurringEdit(null) }}
+      >
+        <DialogContent className="sm:max-w-[400px]" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>修改重複任務</DialogTitle>
+            <DialogDescription>
+              {pendingRecurringEdit && (() => {
+                const newStart = pendingRecurringEdit.newStartDate
+                  ? format(new Date(pendingRecurringEdit.newStartDate), 'M/d HH:mm')
+                  : ''
+                const newEnd = pendingRecurringEdit.newDueDate
+                  ? format(new Date(pendingRecurringEdit.newDueDate), 'HH:mm')
+                  : ''
+                const parentTask = tasks.find((t: Task) => t.id === pendingRecurringEdit.originalTaskId)
+                return `「${parentTask?.title || ''}」${pendingRecurringEdit.mode === 'move' ? '移動' : '調整'}至 ${newStart}${newEnd ? ` - ${newEnd}` : ''}`
+              })()}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2 mt-2">
+            <Button
+              variant="outline"
+              className="w-full justify-start h-auto py-3 px-4"
+              onClick={handleRecurringEditThisOnly}
+            >
+              <div className="text-left">
+                <div className="font-medium">只更動本次</div>
+                <div className="text-xs text-muted-foreground mt-0.5">僅修改這一次的時間，其他重複不受影響</div>
+              </div>
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full justify-start h-auto py-3 px-4"
+              onClick={handleRecurringEditAll}
+            >
+              <div className="text-left">
+                <div className="font-medium">全部一起更動</div>
+                <div className="text-xs text-muted-foreground mt-0.5">所有重複任務都套用新的時間</div>
+              </div>
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setPendingRecurringEdit(null)}>
+              取消
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 任務詳情彈窗 - 與任務列表共用 */}
       <TaskDetailDialog
