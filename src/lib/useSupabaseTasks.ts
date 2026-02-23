@@ -35,6 +35,8 @@ export interface Task {
   // AI 排程欄位
   estimatedMinutes?: number   // 預估時間（分鐘）
   taskType?: TaskType         // 任務類型：focus（專注）或 background（背景）
+  // 會議記錄關聯欄位
+  meetingNoteId?: string      // 關聯的會議記錄 ID
 }
 
 // 將 Supabase 資料轉換為前端格式
@@ -63,6 +65,8 @@ function dbTaskToTask(dbTask: DbTask): Task {
     // AI 排程欄位
     estimatedMinutes: dbTask.estimated_minutes || undefined,
     taskType: dbTask.task_type || undefined,
+    // 會議記錄關聯欄位
+    meetingNoteId: dbTask.meeting_note_id || undefined,
   }
 }
 
@@ -117,6 +121,8 @@ export function useSupabaseTasks() {
         // AI 排程欄位
         estimated_minutes: task.estimatedMinutes || null,
         task_type: task.taskType || null,
+        // 會議記錄關聯欄位
+        meeting_note_id: task.meetingNoteId || null,
       })
       setTasks(prev => [dbTaskToTask(dbTask), ...prev])
       return dbTask
@@ -172,6 +178,8 @@ export function useSupabaseTasks() {
       // AI 排程欄位
       if ('estimatedMinutes' in updates) dbUpdates.estimated_minutes = updates.estimatedMinutes || null
       if ('taskType' in updates) dbUpdates.task_type = updates.taskType || null
+      // 會議記錄關聯欄位
+      if ('meetingNoteId' in updates) dbUpdates.meeting_note_id = updates.meetingNoteId || null
 
       const dbTask = await tasksApi.update(id, dbUpdates)
       setTasks(prev => prev.map(t => t.id === id ? dbTaskToTask(dbTask) : t))

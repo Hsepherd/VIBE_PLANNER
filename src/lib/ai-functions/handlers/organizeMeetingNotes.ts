@@ -20,7 +20,7 @@ interface OrganizedMeetingNotes {
   participants: string[]
   discussionPoints: { topic: string; details: string }[]
   decisions: string[]
-  actionItems: { task: string; assignee?: string; dueDate?: string }[]
+  actionItems: { task: string; description?: string; assignee?: string; group?: string; dueDate?: string; startDate?: string }[]
   nextSteps: string[]
 }
 
@@ -45,7 +45,14 @@ export async function organizeMeetingNotes(
   ],
   "decisions": ["決議事項1", "決議事項2"],
   "actionItems": [
-    { "task": "待辦任務", "assignee": "負責人", "dueDate": "截止日期" }
+    {
+      "task": "待辦任務標題（簡短）",
+      "description": "【任務摘要】\n一句話描述這個任務的目標和背景\n\n【執行細節】\n1. 具體步驟一\n2. 具體步驟二\n3. 具體步驟三\n\n【會議脈絡】\n簡述這個任務在會議中的討論背景\n\n【原文引用】\n「[00:05:30] 從會議中引用的相關原話」\n「[00:08:15] 另一段相關原話」",
+      "assignee": "負責人姓名",
+      "group": "負責組別/部門",
+      "dueDate": "截止日期",
+      "startDate": "開始日期"
+    }
   ],
   "nextSteps": ["下一步行動1"]
 }
@@ -56,7 +63,23 @@ export async function organizeMeetingNotes(
 3. 決議事項是明確做出的決定
 4. 待辦任務是需要執行的具體工作
 5. 若某欄位無相關內容，使用空陣列
-6. 所有輸出使用繁體中文`
+6. 所有輸出使用繁體中文
+
+actionItems 欄位規則（極重要）：
+- task：簡短的任務標題（10-30字）
+- description：必須使用以下格式，包含四個區塊：
+  【任務摘要】一段話說明任務目標（30-50字）
+  【執行細節】列出 2-4 個具體執行步驟（用數字編號）
+  【會議脈絡】說明這個任務產生的會議背景（20-40字）
+  【原文引用】引用會議中提到這個任務的原話，格式為「[時間碼] 原話內容」
+    - 如果原始內容有時間碼（如 00:05:30、5:30、[05:30] 等），保留並使用該時間碼
+    - 如果沒有時間碼，根據內容在會議中的相對位置估算（如會議開始、中段、結尾）
+    - 範例：「[00:12:45] 我們需要在下週前完成這個功能」
+- assignee：只能填寫「participants」陣列中出現的人名。如果沒有明確指定負責人，assignee 留空字串 ""
+- group：填組別或部門名稱（如：行銷組、技術部門、客服組）
+- 絕對不要編造或猜測不存在的人名
+- startDate 預設為會議日期（date 欄位的值）
+- dueDate 從內容明確提到的截止日期推測，若無則留空`
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4.1-2025-04-14',
@@ -133,6 +156,8 @@ function generateMarkdown(notes: OrganizedMeetingNotes): string {
     notes.actionItems.forEach((item) => {
       let taskLine = `- [ ] ${item.task}`
       if (item.assignee) taskLine += ` (@${item.assignee})`
+      if (item.group) taskLine += ` [${item.group}]`
+      if (item.startDate) taskLine += ` [開始：${item.startDate}]`
       if (item.dueDate) taskLine += ` [截止：${item.dueDate}]`
       lines.push(taskLine)
     })
