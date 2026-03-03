@@ -83,6 +83,15 @@ export default function CalendarPage() {
   // 右鍵選單狀態
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; task: Task } | null>(null)
 
+  // 當前時間（每分鐘自動更新，驅動時間線移動）
+  const [currentTime, setCurrentTime] = useState(new Date())
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date())
+    }, 60000) // 每 60 秒更新一次
+    return () => clearInterval(timer)
+  }, [])
+
   // 觸控裝置偵測
   const [isTouchDevice, setIsTouchDevice] = useState(false)
   useEffect(() => {
@@ -1004,7 +1013,7 @@ export default function CalendarPage() {
             <div
               className="absolute left-0 right-0 border-t-2 border-red-500 z-10"
               style={{
-                top: `${(new Date().getHours() * 64 + (new Date().getMinutes() / 60) * 64)}px`,
+                top: `${(currentTime.getHours() * 64 + (currentTime.getMinutes() / 60) * 64)}px`,
               }}
             >
               <div className="w-3 h-3 bg-red-500 rounded-full -mt-1.5 -ml-1.5" />
@@ -1600,7 +1609,7 @@ export default function CalendarPage() {
                       <div
                         className="absolute left-0 right-0 border-t-2 border-red-500 z-10"
                         style={{
-                          top: `${(new Date().getHours() * 56 + (new Date().getMinutes() / 60) * 56)}px`,
+                          top: `${(currentTime.getHours() * 56 + (currentTime.getMinutes() / 60) * 56)}px`,
                         }}
                       >
                         <div className="w-2 h-2 bg-red-500 rounded-full -mt-1 -ml-1" />
